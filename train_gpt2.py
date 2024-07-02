@@ -70,11 +70,11 @@ class Block(nn.Module):
 
 @dataclass
 class GPTConfig:
-    block_size: int = 897 # max sequence length
+    block_size: int = 665 # max sequence length
     vocab_size: int = 4112 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
-    n_layer: int = 10 # number of layers
+    n_layer: int = 11 # number of layers
     n_head: int = 16 # number of heads
-    n_embd: int = 1024 # embedding dimension
+    n_embd: int = 1152 # embedding dimension
 
 class GPT(nn.Module):
 
@@ -316,17 +316,12 @@ torch.manual_seed(1337)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
-# enc = tiktoken.get_encoding("gpt2")
-# total_batch_size = 524288 # 2**19, ~0.5M, in number of tokens
-# B = 64 # micro batch size
-# T = 1024 # sequence length
-
-total_batch_size = 897*36  # pick something about 32768   [512*64]
-B = 18 # micro batch size      [6]
-T = 897 # sequence length      [512]
+total_batch_size = 665*50  # pick something about 32768   [512*64]
+B = 25 # micro batch size      [6]
+T = 665 # sequence length      [512]
 
 GROK_ALPHA = 0.9  #0.94
-GROK_LAMB = 0.5  #0.85
+GROK_LAMB = 0.6667  #0.85
 
 assert total_batch_size % (B * T * ddp_world_size) == 0, "make sure total_batch_size is divisible by B * T * ddp_world_size"
 grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
@@ -351,11 +346,11 @@ if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model # always contains the "raw" unwrapped model
 
-max_lr = 1e-3 #0.0018
-init_lr_pct = 0.01 #0.05
+max_lr = 1.25e-3  #0.0018
+init_lr_pct = 0.01  #0.05
 min_lr = max_lr * 0.1
-max_steps = 16000 #Was 100000, our goal is 610k +
-warmup_steps = int(max_steps*0.15) # was *0.1 ... reduce again/more with more data/higher max steps
+max_steps = 16000  #Was 100000, our goal is 610k +
+warmup_steps = int(max_steps*0.15)  # was *0.1 ... reduce again/more with more data/higher max steps
 def get_lr(it):
     # 1) linear warmup for warmup_iters steps
     if it < warmup_steps:
@@ -370,7 +365,7 @@ def get_lr(it):
     return min_lr + coeff * (max_lr - min_lr)
 
 # optimize!
-optimizer = raw_model.configure_optimizers(weight_decay=0.05, learning_rate=max_lr * init_lr_pct, device_type=device_type) #decay 0.1
+optimizer = raw_model.configure_optimizers(weight_decay=0.05, learning_rate=max_lr * init_lr_pct, device_type=device_type)  #decay 0.1
 
 # create the log directory we will write checkpoints to and log to
 log_dir = "log"
@@ -438,7 +433,8 @@ for step in range(max_steps):
         if ddp:
             model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
         loss.backward()
-        grads = gradfilter_ema(model, grads=grads, alpha=GROK_ALPHA, lamb=GROK_LAMB)
+        if step >= warmup_steps * 0.6667:
+            grads = gradfilter_ema(model, grads=grads, alpha=GROK_ALPHA, lamb=GROK_LAMB * (min(1.0, step / warmup_steps) ** 3))
     if ddp:
         dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)

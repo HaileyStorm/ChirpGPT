@@ -5,8 +5,8 @@ import numpy as np
 
 class SpeechTokenizer():
     def __init__(self, device = 'cpu') -> None:
-        self.model = torch.compile(SNAC.from_pretrained("hubertsiuzdak/snac_32khz").eval().to(device))
-        self.sample_rate = 32000
+        self.model = torch.compile(SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval().to(device))
+        self.sample_rate = 24000
         self.device = device
 
     def flatten_tensors(self, tensors, seperator=4097):
