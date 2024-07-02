@@ -24,7 +24,7 @@ Path('./data').mkdir(parents=True, exist_ok=True)
 
 tokenizer = SpeechTokenizer(device=device)
 
-seconds_per_batch = 3
+seconds_per_batch = 5
 batch_size = 2
 print("batch size:", batch_size)
 

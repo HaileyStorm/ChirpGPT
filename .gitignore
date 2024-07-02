@@ -5,3 +5,8 @@ data/*
 __pycache__
 log
 pretrained
+data_24/*
+*.pt
+\!NOTES-birds.txt
+venv
+*.wav
