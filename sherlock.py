@@ -24,8 +24,8 @@ Path('./data').mkdir(parents=True, exist_ok=True)
 
 tokenizer = SpeechTokenizer(device=device)
 
-seconds_per_batch = 5
-batch_size = 2
+seconds_per_batch = 5  #5s = 897 tokens for 32khz and 473 for 24khz
+batch_size = 2 #Make sure seconds_per_batch * batch_size is < shortest file duration
 print("batch size:", batch_size)
 
 data_path = "./tiny-sherlock-audio"
@@ -57,6 +57,7 @@ for audio_path in sorted([x for x in os.listdir(data_path) if file_ext in x]):
     single_doc = []
     for batch in tqdm(batches[:-1]):
         encoded_batch = tokenizer.encode(batch)
+        #print(f"Shape of batch: {np.array(batch).shape} and encoded batch: {np.array(encoded_batch).shape}")
         for x in encoded_batch:
             single_doc.extend(x[:-1])
 

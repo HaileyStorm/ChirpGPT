@@ -70,7 +70,7 @@ class Block(nn.Module):
 
 @dataclass
 class GPTConfig:
-    block_size: int = 993 # max sequence length
+    block_size: int = 897 # max sequence length
     vocab_size: int = 4112 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
     n_layer: int = 10 # number of layers
     n_head: int = 16 # number of heads
@@ -238,7 +238,8 @@ class DataLoaderLite:
             print(f"Total tokens across all shards: {self.total_tokens}")
         # Broadcast total_tokens to all processes
         self.total_tokens = torch.tensor([self.total_tokens], dtype=torch.long)
-        torch.distributed.broadcast(self.total_tokens, src=0)
+        if ddp:
+            torch.distributed.broadcast(self.total_tokens, src=0)
         self.total_tokens = self.total_tokens.item()
         
         self.reset()
@@ -320,9 +321,9 @@ if torch.cuda.is_available():
 # B = 64 # micro batch size
 # T = 1024 # sequence length
 
-total_batch_size = 512*64
-B = 64 # micro batch size
-T = 512 # sequence length
+total_batch_size = 897*36  # pick something about 32768   [512*64]
+B = 18 # micro batch size      [6]
+T = 897 # sequence length      [512]
 
 GROK_ALPHA = 0.9  #0.94
 GROK_LAMB = 0.5  #0.85
@@ -350,10 +351,10 @@ if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model # always contains the "raw" unwrapped model
 
-max_lr = 1.5e-3 #0.0018
+max_lr = 1e-3 #0.0018
 init_lr_pct = 0.01 #0.05
 min_lr = max_lr * 0.1
-max_steps = 18000 #Was 100000, our goal is 610k +
+max_steps = 16000 #Was 100000, our goal is 610k +
 warmup_steps = int(max_steps*0.15) # was *0.1 ... reduce again/more with more data/higher max steps
 def get_lr(it):
     # 1) linear warmup for warmup_iters steps

@@ -16,7 +16,7 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 print(f"using device: {device}")
 model = GPT(GPTConfig())
 
-original_state_dict = torch.load('./log/model_18000.pt', map_location=torch.device('cpu'))
+original_state_dict = torch.load('./log/model_05000.pt', map_location=torch.device('cpu'))
 
 # Corrected state dictionary
 state_dict = {
@@ -36,7 +36,8 @@ unseen = [4097, 547, 426, 2825, 1441, 2209, 1300, 161, 4097, 1646]
 seperator = 4097
 
 num_return_sequences = 1
-max_length = 993
+#5s = 897 tokens for 32khz and 473 for 24khz
+max_length = 897
 
 tokens = [seperator]
 #tokens = unseen

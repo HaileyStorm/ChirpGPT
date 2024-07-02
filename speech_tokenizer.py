@@ -1,89 +1,180 @@
-import torch
-import numpy as np
+import torch, torchaudio
 from snac import SNAC
+import numpy as np
+
 
 class SpeechTokenizer():
     def __init__(self, device = 'cpu') -> None:
         self.model = torch.compile(SNAC.from_pretrained("hubertsiuzdak/snac_32khz").eval().to(device))
         self.sample_rate = 32000
         self.device = device
-        self.n_codebooks = len(self.model.quantizer.quantizers)
 
-    def flatten_tensors(self, tensors, separator=4097):
+    def flatten_tensors(self, tensors, seperator=4097):
+        """Safely flattens a list of tensors into a flat list of integers."""
         flattened = []
+
         for batch in range(tensors[0].size(0)):
             flattened_list = []
-            for i in range(tensors[0].size(1)):
-                flattened_list.append(separator)
-                flattened_list.append(tensors[0][batch][i].item())
-                for j in range(1, len(tensors)):
-                    start = i * (2 ** (j - 1))
-                    end = (i + 1) * (2 ** (j - 1))
-                    flattened_list.extend(tensors[j][batch][start:end].tolist())
-            flattened_list.append(separator)
+            if len(tensors) == 3:
+                for i in range(tensors[0].size()[1]):
+                    flattened_list.append(seperator)
+                    flattened_list.append(tensors[0][batch][i].item())
+                    for j in range(2):
+                        flattened_list.append(tensors[1][batch][j + i * 2].item())
+                        for k in range(2):
+                            # print(k,i)
+                            flattened_list.append(
+                                tensors[2][batch][k + j * 2 + i * 4].item()
+                            )
+
+            if len(tensors) == 4:
+                for i in range(tensors[0].size()[1]):
+                    flattened_list.append(seperator)
+                    flattened_list.append(tensors[0][batch][i].item())
+                    for j in range(2):
+                        flattened_list.append(tensors[1][batch][j + i * 2].item())
+                        for k in range(2):
+                            # print(k,i)
+                            flattened_list.append(
+                                tensors[2][batch][k + j * 2 + i * 4].item()
+                            )
+                            for l in range(2):
+                                flattened_list.append(
+                                    tensors[3][batch][l + k * 2 + j * 4 + i * 8].item()
+                                )
+            flattened_list.append(seperator)
             flattened.append(flattened_list)
+
         return flattened
 
-    def reconstruct_single_tensors(self, flattened_output, separator=4097):
-        def remove_elements_before_separator(flattened_list):
+
+    def reconstruct_single_tensors(self, flattened_output, seperator=4097):
+        """Reconstructs the list of tensors from the flattened output."""
+
+        def count_elements_between_hashes(lst):
             try:
-                first_separator_index = flattened_list.index(separator)
-                return flattened_list[first_separator_index:]
+                # Find the index of the first '#'
+                first_index = lst.index(seperator)
+                # Find the index of the second '#' after the first
+                second_index = lst.index(seperator, first_index + 1)
+                # Count the elements between the two indices
+                return second_index - first_index - 1
             except ValueError:
-                raise Exception("No separator found in the list")
+                # Handle the case where there aren't enough '#' symbols
+                return f"List does not contain two '{seperator}' seperators"
 
+        def remove_elements_before_hash(flattened_list):
+            try:
+                # Find the index of the first '#'
+                first_hash_index = flattened_list.index(seperator)
+                # Return the list starting from the first '#'
+                return flattened_list[first_hash_index:]
+            except ValueError:
+                # Handle the case where there is no '#'
+                raise Exception
+
+        def list_to_torch_tensor(tensor1):
+            # Convert the list to a torch tensor
+            tensor = torch.tensor(tensor1)
+            # Reshape the tensor to have size (1, n)
+            tensor = tensor.unsqueeze(0)
+            return tensor
+        
         flattened_output = flattened_output.tolist()
-        flattened_output = remove_elements_before_separator(flattened_output)
-    
-        tensors = [[] for _ in range(self.n_codebooks)]
-        group_size = sum(2**i for i in range(self.n_codebooks - 1)) + 1
-    
-        for i in range(1, len(flattened_output) - 1, group_size):
-            tensors[0].append(flattened_output[i])
-            start = i + 1
-            for j in range(1, self.n_codebooks):
-                end = start + 2**(j-1)
-                tensors[j].extend(flattened_output[start:end])
-                start = end    
+        flattened_output = remove_elements_before_hash(flattened_output)
+        codes = []
+        tensor1 = []
+        tensor2 = []
+        tensor3 = []
+        tensor4 = []
 
-        # Convert to tensors and reshape
-        return [torch.tensor(t).view(1, -1) for t in tensors]
+        n_tensors = count_elements_between_hashes(flattened_output)
+        # print("n_tensors:", n_tensors)
+        if n_tensors == 7:
+            for i in range(0, len(flattened_output), 8):
 
+                tensor1.append(flattened_output[i + 1])
+                tensor2.append(flattened_output[i + 2])
+                tensor3.append(flattened_output[i + 3])
+                tensor3.append(flattened_output[i + 4])
+
+                tensor2.append(flattened_output[i + 5])
+                tensor3.append(flattened_output[i + 6])
+                tensor3.append(flattened_output[i + 7])
+                codes = [
+                    list_to_torch_tensor(tensor1),
+                    list_to_torch_tensor(tensor2),
+                    list_to_torch_tensor(tensor3),
+                ]
+
+        if n_tensors == 15:
+            for i in range(0, len(flattened_output), 16):
+                #print(f"{len(flattened_output)} vs {i}")
+                tensor1.append(flattened_output[i + 1])
+                tensor2.append(flattened_output[i + 2])
+                tensor3.append(flattened_output[i + 3])
+                tensor4.append(flattened_output[i + 4])
+                tensor4.append(flattened_output[i + 5])
+                tensor3.append(flattened_output[i + 6])
+                tensor4.append(flattened_output[i + 7])
+                tensor4.append(flattened_output[i + 8])
+
+                tensor2.append(flattened_output[i + 9])
+                tensor3.append(flattened_output[i + 10])
+                tensor4.append(flattened_output[i + 11])
+                tensor4.append(flattened_output[i + 12])
+                tensor3.append(flattened_output[i + 13])
+                tensor4.append(flattened_output[i + 14])
+                tensor4.append(flattened_output[i + 15])
+
+                codes = [
+                    list_to_torch_tensor(tensor1),
+                    list_to_torch_tensor(tensor2),
+                    list_to_torch_tensor(tensor3),
+                    list_to_torch_tensor(tensor4),
+                ]
+
+        return codes
+
+    # expects list of waveforms formatted in 24khz)
     def encode(self, waves):
+
         audio = torch.stack(waves).to(self.device)
+
         with torch.inference_mode():
             codes = self.model.encode(audio)
-        return np.array(self.flatten_tensors(codes))
-    
-    def decode(self, tokens):
-        raw = [self.reconstruct_single_tensors(x[:-1]) for x in tokens]
-    
-        # Determine the expected shape for each codebook
-        expected_shapes = [
-            (1, raw[0][0].size(1)),  # Shape for the first codebook
-            *[(1, raw[0][0].size(1) * (2**i)) for i in range(1, self.n_codebooks)]  # Shapes for subsequent codebooks
-        ]
-    
-        # Reshape and pad (or trim) each codebook tensor to match the expected shape
-        codes = []
-        for i in range(self.n_codebooks):
-            codebook = torch.cat([raw[j][i] for j in range(len(raw))]).to(self.device)
-            expected_shape = expected_shapes[i]
+            
+        #print("Number of tensors:", len(codes))
+        #mx = 0
+        #for i, code in enumerate(codes):
+        #    print(f"Tensor {i} shape:", code.shape)
+        #    mx = max(torch.max(code), mx)
+        #print(f"Max value: {mx}")
         
-            if codebook.size(1) < expected_shape[1]:
-                # Pad if smaller
-                codebook = torch.nn.functional.pad(codebook, (0, expected_shape[1] - codebook.size(1)))
-            elif codebook.size(1) > expected_shape[1]:
-                # Trim if larger
-                codebook = codebook[:, :expected_shape[1]]
-        
-            codes.append(codebook)
-    
-        with torch.inference_mode():
-            audio_hat = self.model.decode(codes)
-    
+        del audio
+
         with torch.no_grad():
             if 'cuda' in self.device:
                 torch.cuda.empty_cache()
+        return np.array(self.flatten_tensors(codes))
+    
+    # of (1, T)
+    def decode(self, tokens):
+        # take -1 to remove the end seperator.
+        raw = [self.reconstruct_single_tensors(x[:-1]) for x in tokens]
+        coarse = torch.cat([raw[i][0] for i in range(len(raw))]).to(self.device)
+        fine = torch.cat([raw[i][1] for i in range(len(raw))]).to(self.device)
+        finer = torch.cat([raw[i][2] for i in range(len(raw))]).to(self.device)
+        with torch.inference_mode():
+            audio_hat = self.model.decode([coarse, fine, finer])
 
+        del coarse
+        del fine
+        del finer
+
+        with torch.no_grad():
+            if 'cuda' in self.device:
+                torch.cuda.empty_cache()
+    
         return audio_hat
+
