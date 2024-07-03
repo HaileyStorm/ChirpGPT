@@ -1,4 +1,4 @@
-from gpt2_infer import GPT, GPTConfig
+from gpt2 import GPT, GPTConfig
 import torch, torchaudio
 from collections import OrderedDict
 import numpy as np
@@ -36,8 +36,8 @@ unseen = [4097, 547, 426, 2825, 1441, 2209, 1300, 161, 4097, 1646]
 seperator = 4097
 
 num_return_sequences = 1
-#5s = 897 tokens for 32khz and 473 for 24khz; 7s = 1142 for 32khz and 665 for 24khz
-max_length = 1142
+#7s @ 32khz = 1216 (excluding final separator)
+max_length = 1217
 
 tokens = [seperator]
 #tokens = unseen
@@ -91,8 +91,8 @@ def find_last_instance_of_seperator(lst, element=4097):
         return len(lst) - 1 - reversed_index
     except ValueError:
         raise ValueError
-#audio_out = tokenizer.decode(np.array([output_tokens[0][:find_last_instance_of_seperator(output_tokens[0]) + 1]]))
-audio_out = tokenizer.decode(np.array([output_tokens[0]]))
+audio_out = tokenizer.decode(np.array([output_tokens[0][:find_last_instance_of_seperator(output_tokens[0]) + 1]]))
+#audio_out = tokenizer.decode(np.array([output_tokens[0]]))
 print(audio_out)
 
 write('test.wav', tokenizer.sample_rate, audio_out.cpu().detach().numpy())
