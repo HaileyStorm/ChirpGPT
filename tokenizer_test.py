@@ -12,7 +12,7 @@ tokenizer = SpeechTokenizer(device=device)
 
 # Load a small clip from the audio file
 audio_path = "./tiny-sherlock-audio/adventuresholmes_01_doyle_64kb.mp3"
-waveform, sample_rate = torchaudio.load(audio_path, num_frames=10 * 32000)  # Load 10 seconds
+waveform, sample_rate = torchaudio.load(audio_path, num_frames=10 * 24000)  # Load 10 seconds
 
 # Resample to 32kHz if necessary
 if sample_rate != tokenizer.sample_rate:
@@ -24,7 +24,7 @@ if waveform.size(0) > 1:
     waveform = torch.mean(waveform, dim=0, keepdim=True)
 
 # Split the audio into chunks
-chunk_size = 7 * 32000  # 7 seconds
+chunk_size = 2 * 32000  # 2 seconds
 chunks = [waveform[:, i:i+chunk_size] for i in range(0, waveform.size(1), chunk_size)]
 
 # Pad the last chunk if necessary

@@ -24,8 +24,8 @@ Path('./data').mkdir(parents=True, exist_ok=True)
 
 tokenizer = SpeechTokenizer(device=device)
 
-seconds_per_batch = 7  #7s @ 32khz = 1216 (excluding final separator)
-batch_size = 1 #Make sure seconds_per_batch * batch_size is < shortest file duration
+seconds_per_chunk = 2  #7s @ 32khz = 1216 (excluding final separator), 2s = 384
+batch_size = 1 #Make sure seconds_per_chunk * batch_size is < shortest file duration
 print("batch size:", batch_size)
 
 data_path = "./tiny-sherlock-audio"
@@ -47,12 +47,11 @@ for audio_path in sorted([x for x in os.listdir(data_path) if file_ext in x]):
 
     i = 0
     while 10*(i+1)*tokenizer.sample_rate < waveform.shape[-1]:
-        waves.append(waveform[:, tokenizer.sample_rate*seconds_per_batch*i : tokenizer.sample_rate*seconds_per_batch*(i+1)])
+        waves.append(waveform[:, tokenizer.sample_rate * seconds_per_chunk * i: tokenizer.sample_rate * seconds_per_chunk * (i + 1)])
         i+=1
-    waves.append(waveform[:, tokenizer.sample_rate*seconds_per_batch*i : ])
+    waves.append(waveform[:, tokenizer.sample_rate * seconds_per_chunk * i:])
     
     batches = list(batch_list(waves, batch_size))
-    # batches = batch_list(waves, batch_size)
 
     single_doc = []
     for batch in tqdm(batches[:-1]):
