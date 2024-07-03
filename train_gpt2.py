@@ -204,11 +204,6 @@ class GPT(nn.Module):
 # -----------------------------------------------------------------------------
 import numpy as np
 
-#def load_tokens(filename):
-#    npt = np.load(filename)
-#    npt = npt.astype(np.int32)
-#    ptt = torch.tensor(npt, dtype=torch.long)
-#    return ptt
 
 class DataLoaderLite:
     def __init__(self, B, T, process_rank, num_processes, split):
