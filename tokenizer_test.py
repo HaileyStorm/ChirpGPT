@@ -1,6 +1,6 @@
 import torch
 import torchaudio
-from tokenizer32khz import SpeechTokenizer
+from speech_tokenizer import SpeechTokenizer
 import numpy as np
 from scipy.io import wavfile
 
