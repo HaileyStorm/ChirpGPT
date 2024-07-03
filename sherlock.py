@@ -1,5 +1,5 @@
 import torch, torchaudio
-from speech_tokenizer import SpeechTokenizer
+from tokenizer32khz import SpeechTokenizer
 import numpy as np
 from tqdm import tqdm
 import itertools
@@ -24,7 +24,7 @@ Path('./data').mkdir(parents=True, exist_ok=True)
 
 tokenizer = SpeechTokenizer(device=device)
 
-seconds_per_batch = 7  #5s = 897 tokens for 32khz and 473 for 24khz; 7s = 665 for 24khz
+seconds_per_batch = 7  #5s = 897 tokens for 32khz and 473 for 24khz; 7s = 1142 for 32khz and 665 for 24khz
 batch_size = 2 #Make sure seconds_per_batch * batch_size is < shortest file duration
 print("batch size:", batch_size)
 

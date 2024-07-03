@@ -5,7 +5,7 @@ data/*
 __pycache__
 log
 pretrained
-data_24/*
+data_*/*
 *.pt
 \!NOTES-birds.txt
 venv

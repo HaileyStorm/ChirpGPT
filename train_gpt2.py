@@ -70,11 +70,11 @@ class Block(nn.Module):
 
 @dataclass
 class GPTConfig:
-    block_size: int = 665 # max sequence length
+    block_size: int = 1142 # max sequence length
     vocab_size: int = 4112 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
-    n_layer: int = 11 # number of layers
+    n_layer: int = 10 # number of layers
     n_head: int = 16 # number of heads
-    n_embd: int = 1152 # embedding dimension
+    n_embd: int = 1024 # embedding dimension
 
 class GPT(nn.Module):
 
@@ -311,9 +311,9 @@ torch.manual_seed(1337)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
-total_batch_size = 665*50  # pick something about 32768   [512*64]
-B = 25 # micro batch size      [6]
-T = 665 # sequence length      [512]
+total_batch_size = 1142*30  # pick something about 32768   [512*64]
+B = 15 # micro batch size      [6]
+T = 1142 # sequence length      [512]
 
 GROK_ALPHA = 0.9  #0.94
 GROK_LAMB = 0.6667  #0.85
