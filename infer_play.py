@@ -36,9 +36,9 @@ unseen = [4097, 547, 426, 2825, 1441, 2209, 1300, 161, 4097, 1646]
 seperator = 4097
 
 num_return_sequences = 1
-# 7s @ 32khz = 1216 (excluding final separator), 2s = 384
-# So, 1152, our max sequence length = 6 seconds. Add an extra token just to make sure  we get the separator :P
-max_length = 1153
+#7s @ 32khz = 1216 (excluding final separator), 2s = 384, 3s = 512
+# So, 1024, our max sequence length = 6 seconds. Add an extra token just to make sure  we get the separator :P
+max_length = 1025
 
 tokens = [seperator]
 #tokens = unseen

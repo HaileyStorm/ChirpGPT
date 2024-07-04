@@ -54,10 +54,10 @@ if master_process:
     wandb.init(project="ChirpGPT")
 
 # sequence length
-T = 1152
-total_batch_size = T*28  # pick something about 32768
+T = 1024
+total_batch_size = T*32  # pick something about 32768
 # micro batch size
-B = 14
+B = 16
 
 
 assert total_batch_size % (B * T * ddp_world_size) == 0, "make sure total_batch_size is divisible by B * T * ddp_world_size"
@@ -84,20 +84,20 @@ raw_model = model.module if ddp else model # always contains the "raw" unwrapped
 
 GROK_ALPHA = 0.9  #0.94
 GROK_LAMB = 0.6667  #0.85
-weight_decay = 0.1
+weight_decay = 0.11
 
 max_lr = 2e-3
 init_lr_pct = 0.075
 min_lr = max_lr * 0.075
 
-num_epochs = 90
+num_epochs = 70
 grad_clip_percentile = 0.1
 grad_clip_min = 1e-3
-grad_clip_max = 1.0
+grad_clip_max = 2.5
 # Was 16000. Our goal is 610k +  (~2TB of 32khz audio if it were single epoch, or ~234GB tokenized)
-max_steps = num_epochs * train_loader.total_tokens // total_batch_size
-print(f"Max steps: {max_steps}")
+max_steps = (num_epochs * train_loader.total_tokens) // total_batch_size
 warmup_steps = int(max_steps*0.15)  # was *0.1 ... reduce again/more with more data/higher max steps
+print(f"Max steps: {max_steps}, Warmup steps: {warmup_steps}")
 
 def get_lr(it):
     # 1) linear warmup for warmup_iters steps
@@ -116,12 +116,11 @@ def get_lr(it):
 optimizer = raw_model.configure_optimizers(weight_decay=weight_decay, learning_rate=max_lr * init_lr_pct, device_type=device_type, log=master_process)  #decay 0.1
 
 def get_clip_value(norms_window, step):
-    if step < 400:
+    if step < warmup_steps:
         return 1.0
     else:
-        #clip_value = np.percentile(norms_window, grad_clip_percentile * 100)
-        #return max(grad_clip_min, min(grad_clip_max, clip_value))
-        return grad_clip_max
+        clip_value = np.percentile(norms_window, grad_clip_percentile * 100)
+        return max(grad_clip_min, min(grad_clip_max, clip_value))
 
 norms_window = []
 
@@ -212,8 +211,7 @@ for step in range(max_steps):
         torch.cuda.synchronize() # wait for the GPU to finish work
     t1 = time.time()
     dt = t1 - t0 # time difference in seconds
-    tokens_processed = train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size
-    tokens_per_sec = tokens_processed / dt
+    tokens_per_sec = total_batch_size / dt
     if master_process:
         print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
         #with open(log_file, "a") as f:

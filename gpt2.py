@@ -70,7 +70,7 @@ class Block(nn.Module):
 
 @dataclass
 class GPTConfig:
-    block_size: int = 1152 # max sequence length
+    block_size: int = 1024 # max sequence length
     vocab_size: int = 4112 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
     n_layer: int = 11 # number of layers
     n_head: int = 16 # number of heads

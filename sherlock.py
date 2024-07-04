@@ -24,7 +24,7 @@ Path('./data').mkdir(parents=True, exist_ok=True)
 
 tokenizer = SpeechTokenizer(device=device)
 
-seconds_per_chunk = 2  #7s @ 32khz = 1216 (excluding final separator), 2s = 384
+seconds_per_chunk = 3  #7s @ 32khz = 1216 (excluding final separator), 2s = 384, 3s = 512
 batch_size = 1 #Make sure seconds_per_chunk * batch_size is < shortest file duration
 print("batch size:", batch_size)
 
@@ -46,7 +46,8 @@ for audio_path in sorted([x for x in os.listdir(data_path) if file_ext in x]):
         waveform = torch.mean(waveform, dim=0, keepdim=True)
 
     i = 0
-    while 10*(i+1)*tokenizer.sample_rate < waveform.shape[-1]:
+    #while 10*(i+1)*tokenizer.sample_rate < waveform.shape[-1]:
+    while (i + 1) * seconds_per_chunk * tokenizer.sample_rate < waveform.shape[-1]:
         waves.append(waveform[:, tokenizer.sample_rate * seconds_per_chunk * i: tokenizer.sample_rate * seconds_per_chunk * (i + 1)])
         i+=1
     waves.append(waveform[:, tokenizer.sample_rate * seconds_per_chunk * i:])
