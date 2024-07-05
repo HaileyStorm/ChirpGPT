@@ -46,7 +46,6 @@ for audio_path in sorted([x for x in os.listdir(data_path) if file_ext in x]):
         waveform = torch.mean(waveform, dim=0, keepdim=True)
 
     i = 0
-    #while 10*(i+1)*tokenizer.sample_rate < waveform.shape[-1]:
     while (i + 1) * seconds_per_chunk * tokenizer.sample_rate < waveform.shape[-1]:
         waves.append(waveform[:, tokenizer.sample_rate * seconds_per_chunk * i: tokenizer.sample_rate * seconds_per_chunk * (i + 1)])
         i+=1
@@ -57,6 +56,7 @@ for audio_path in sorted([x for x in os.listdir(data_path) if file_ext in x]):
     single_doc = []
     for batch in tqdm(batches[:-1]):
         encoded_batch = tokenizer.encode(batch)
+        encoded_batch = encoded_batch.astype(np.int16)
         #print(f"Shape of batch: {np.array(batch).shape} and encoded batch: {np.array(encoded_batch).shape}")
         for x in encoded_batch:
             single_doc.extend(x[:-1])
