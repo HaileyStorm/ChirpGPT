@@ -237,7 +237,7 @@ def main(resume_index=0, datasets_to_use=DATASETS):
                                                                                            'train')
 
             # Save any remaining data for this in the last shard
-            current_val_shard, current_val_shard_size = save_shard(current_train_shard, current_train_shard_size, 'train')
+            current_train_shard, current_train_shard_size = save_shard(current_train_shard, current_train_shard_size, 'train')
             current_val_shard, current_val_shard_size = save_shard(current_val_shard, current_val_shard_size, 'val')
 
 
