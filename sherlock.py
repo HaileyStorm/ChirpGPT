@@ -36,7 +36,7 @@ for audio_path in sorted([x for x in os.listdir(data_path) if file_ext in x]):
     waves = []
     waveform, sample_rate = torchaudio.load(f'{data_path}/{audio_path}', backend='soundfile')
 
-    # Resample to 24kHz if necessary
+    # Resample to if necessary
     if sample_rate != tokenizer.sample_rate:
         resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=tokenizer.sample_rate)
         waveform = resampler(waveform)
