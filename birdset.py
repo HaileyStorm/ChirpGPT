@@ -35,6 +35,10 @@ def filter_example(example, is_train_split):
     latitude = example['lat']
     longitude = example['long']
     length = example['length']
+    if latitude is None or longitude is None:
+        return False
+    if length is None:
+        length = 6
 
     base_condition = (
             33 <= latitude <= 51 and
@@ -45,6 +49,8 @@ def filter_example(example, is_train_split):
     if is_train_split:
         quality = example['quality']
         num_events = len(example['detected_events'])
+        if quality is None or num_events is None:
+            return False
         return base_condition and (quality == 'A' or quality == 'B') and num_events >= length // 6
     else:
         return base_condition
@@ -230,9 +236,9 @@ def main(resume_index=0, datasets_to_use=DATASETS):
                                                                                            current_train_shard_size,
                                                                                            'train')
 
-    # Save any remaining data in the last shard
-    save_shard(current_train_shard, current_train_shard_size, 'train')
-    save_shard(current_val_shard, current_val_shard_size, 'val')
+            # Save any remaining data for this in the last shard
+            save_shard(current_train_shard, current_train_shard_size, 'train')
+            save_shard(current_val_shard, current_val_shard_size, 'val')
 
 
 if __name__ == "__main__":
