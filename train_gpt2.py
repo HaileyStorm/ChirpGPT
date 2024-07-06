@@ -10,6 +10,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 import wandb
 import numpy as np
+from tqdm import tqdm
 
 # simple launch:
 # python train_gpt2.py
@@ -82,22 +83,27 @@ if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model # always contains the "raw" unwrapped model
 
-GROK_ALPHA = 0.92  # 0.9
-GROK_LAMB = 0.75  # 0.6667
-weight_decay = 0.125
+GROK_ALPHA = 0.9  # 0.9
+GROK_LAMB = 0.625  # 0.6667
+weight_decay = 0.13333  # 0.125
 
-max_lr = 2.25e-3
-init_lr_pct = 0.085
+max_lr = 2.3333e-3
+init_lr_pct = 0.075
 min_lr = max_lr * 0.125
 
-num_epochs = 85
+num_epochs = 18
 grad_clip_percentile = 0.1
 grad_clip_min = 1e-3
-grad_clip_max = 2.0
-# Was 16000 for 24khz model, ~21000 for 32khz. Our goal is 610k +  (~2TB of 32khz audio if it were single epoch, or ~234GB tokenized)
+grad_clip_max = 0.5  #1.5
+norms_window_size = 200
+# Decrease lr when norm percentile & loss are increasing
+max_clip_slope = 1.075
+lr_adj_rate = 0.9  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps
+# Was 16000 for 24khz model, ~21000 for 32khz. Our goal is 610k +  (~2TB of 32khz audio if it were single epoch, or ~57.5GB tokenized)
 max_steps = (num_epochs * train_loader.total_tokens) // total_batch_size
-warmup_steps = int(max_steps*0.15)  # was *0.1 ... reduce again/more with more data/higher max steps
+warmup_steps = int(max_steps*0.0825)
 print(f"Max steps: {max_steps}, Warmup steps: {warmup_steps}")
+
 
 def get_lr(it):
     # 1) linear warmup for warmup_iters steps
@@ -112,14 +118,38 @@ def get_lr(it):
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff starts at 1 and goes to 0
     return min_lr + coeff * (max_lr - min_lr)
 
+
 def get_clip_value(norms_window, step):
-    if step < max(200, warmup_steps * 0.6667):
+    global max_lr
+    if step < max(norms_window_size, warmup_steps * 0.5):
         return 1.0
     else:
         clip_value = np.percentile(norms_window, grad_clip_percentile * 100)
+
+        # Decrease lr when norm percentile & loss are increasing
+        third = norms_window_size // 3
+        p1 = np.percentile(norms_window[:third], grad_clip_percentile * 100)
+        p2 = np.percentile(norms_window[third:2*third], grad_clip_percentile * 100)
+        p3 = np.percentile(norms_window[2*third:], grad_clip_percentile * 100)
+        l1 = np.mean(loss_window[:third])
+        l2 = np.mean(loss_window[third:2*third])
+        l3 = np.mean(loss_window[2*third:])
+        if p3 / p2 > max_clip_slope and p2/p1 > max_clip_slope and l3 > l2 > l1:
+            max_lr *= lr_adj_rate ** (3 / norms_window_size)
+            wandb.log({
+                "etc/panic": 1.0,
+            })
+        else:
+            wandb.log({
+                "etc/panic": 0.0,
+            })
+
         return max(grad_clip_min, min(grad_clip_max, clip_value))
 
+
 norms_window = []
+loss_window = []
+current_epoch = 0
 optimizer = raw_model.configure_optimizers(weight_decay=weight_decay, learning_rate=max_lr * init_lr_pct, device_type=device_type, log=master_process)
 
 # create the log directory we will write checkpoints to and log to
@@ -129,7 +159,7 @@ os.makedirs(log_dir, exist_ok=True)
 #with open(log_file, "w") as f: # open for writing to clear the file
  #   pass
 
-for step in range(max_steps):
+for step in tqdm(range(max_steps), f"Training..."):
     t0 = time.time()
     last_step = (step == max_steps - 1)
 
@@ -153,7 +183,7 @@ for step in range(max_steps):
         if ddp:
             dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
         if master_process:
-            print(f"validation loss: {val_loss_accum.item():.4f}")
+            #print(f"validation loss: {val_loss_accum.item():.4f}")
             #with open(log_file, "a") as f:
             #    f.write(f"{step} val {val_loss_accum.item():.4f}\n")
             wandb.log({
@@ -197,8 +227,10 @@ for step in range(max_steps):
         dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), get_clip_value(norms_window, step))
     norms_window.append(norm.item())
-    if len(norms_window) > 200:
+    loss_window.append(loss_accum.item())
+    if len(norms_window) > norms_window_size:
         norms_window.pop(0)
+        loss_window.pop(0)
     # determine and set the learning rate for this iteration
     lr = get_lr(step)
     for param_group in optimizer.param_groups:
@@ -210,16 +242,20 @@ for step in range(max_steps):
     dt = t1 - t0 # time difference in seconds
     tokens_per_sec = total_batch_size / dt
     if master_process:
-        print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
+        #print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
         #with open(log_file, "a") as f:
         #    f.write(f"{step} train {loss_accum.item():.6f}\n")
-        current_epoch = step * B * T * ddp_world_size // train_loader.total_tokens
+        prev_epoch = current_epoch
+        current_epoch = step * total_batch_size // train_loader.total_tokens
+        if prev_epoch != current_epoch:
+            print(f"Epoch {current_epoch}")
         wandb.log({
             "etc/step": step,
             "etc/epoch": current_epoch,
             "etc/lr": lr,
             "etc/norm": norm.item(),
             "etc/clip_value": get_clip_value(norms_window, step),
+            "etc/toks_per_sec": tokens_per_sec,
             "train/loss": loss_accum.item()
         })
 
