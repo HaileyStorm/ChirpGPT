@@ -150,6 +150,7 @@ def get_clip_value(norms_window, step):
 norms_window = []
 loss_window = []
 current_epoch = 0
+clip_val = get_clip_value([], 0)
 optimizer = raw_model.configure_optimizers(weight_decay=weight_decay, learning_rate=max_lr * init_lr_pct, device_type=device_type, log=master_process)
 
 # create the log directory we will write checkpoints to and log to
@@ -225,7 +226,8 @@ for step in tqdm(range(max_steps), f"Training..."):
             grads = gradfilter_ema(model, grads=grads, alpha=GROK_ALPHA, lamb=GROK_LAMB * (min(1.0, step / (warmup_steps * 1.5)) ** 3))
     if ddp:
         dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
-    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), get_clip_value(norms_window, step))
+    clip_val = get_clip_value(norms_window, step)
+    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), clip_val)
     norms_window.append(norm.item())
     loss_window.append(loss_accum.item())
     if len(norms_window) > norms_window_size:
@@ -254,7 +256,7 @@ for step in tqdm(range(max_steps), f"Training..."):
             "etc/epoch": current_epoch,
             "etc/lr": lr,
             "etc/norm": norm.item(),
-            "etc/clip_value": get_clip_value(norms_window, step),
+            "etc/clip_value": clip_val,
             "etc/toks_per_sec": tokens_per_sec,
             "train/loss": loss_accum.item()
         })
