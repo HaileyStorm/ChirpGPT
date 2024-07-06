@@ -21,8 +21,8 @@ SUB_CHUNK_LENGTH = 3  # seconds
 DATASETS = {
     'XCL': ['train'],
     'HSN': ['train', 'test'],
-    'POW': ['train', 'test'],
-    'SSW': ['train', 'test'],
+    'POW': ['train', 'test'],  # 100% will fail current lat/long filter
+    'SSW': ['train', 'test'],  # 100% will fail current lat/long filter
     'SNE': ['train', 'test']
 }
 
@@ -38,6 +38,7 @@ def filter_example(example, is_train_split):
     if latitude is None or longitude is None:
         return False
     if length is None:
+        # chunk_audio will handle it if it turns out to be shorter
         length = 6
 
     base_condition = (
@@ -243,5 +244,5 @@ def main(resume_index=0, datasets_to_use=DATASETS):
 
 if __name__ == "__main__":
     # Example: Exclude XCL, POW, and SSW
-    datasets_to_use = {k: v for k, v in DATASETS.items() if k not in ['XCL', 'POW', 'SSW']}
+    datasets_to_use = {k: v for k, v in DATASETS.items() if k not in ['XCL', 'POW', 'SSW', 'HSN']}
     main(resume_index=0, datasets_to_use=datasets_to_use)
