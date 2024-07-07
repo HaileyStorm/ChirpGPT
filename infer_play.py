@@ -16,7 +16,7 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 print(f"using device: {device}")
 model = GPT(GPTConfig())
 
-original_state_dict = torch.load('./log/model_23202.pt', map_location=torch.device('cpu'))
+original_state_dict = torch.load('./log/model_41764.pt', map_location=torch.device('cpu'))
 
 # Corrected state dictionary
 state_dict = {

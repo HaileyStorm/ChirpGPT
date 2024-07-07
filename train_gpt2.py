@@ -89,7 +89,7 @@ weight_decay = 0.13333  # 0.125
 
 max_lr = 2.3333e-3
 init_lr_pct = 0.075
-min_lr = max_lr * 0.125
+min_lr = max_lr * 0.05
 
 num_epochs = 18
 grad_clip_percentile = 0.1
@@ -120,7 +120,7 @@ def get_lr(it):
 
 
 def get_clip_value(norms_window, step):
-    global max_lr
+    global max_lr, total_panic
     if step < max(norms_window_size, warmup_steps * 0.5):
         return 1.0
     else:
@@ -136,12 +136,17 @@ def get_clip_value(norms_window, step):
         l3 = np.mean(loss_window[2*third:])
         if step > warmup_steps * 0.5 and p3 > p2 > p1 and p3 / p2 > max_clip_slope and p2/p1 > max_clip_slope and l3 > l2 > l1:
             max_lr *= lr_adj_rate ** (3 / norms_window_size)
+            total_panic += 1
             wandb.log({
-                "etc/panic": 1.0,
+                "debug/panic": 1.0,
+                "debug/total_panic": total_panic,
+                "debug/max_lr": max_lr,
             })
         else:
             wandb.log({
-                "etc/panic": 0.0,
+                "debug/panic": 0.0,
+                "debug/total_panic": total_panic,
+                "debug/max_lr": max_lr,
             })
 
         return max(grad_clip_min, min(grad_clip_max, clip_value))
@@ -150,6 +155,7 @@ def get_clip_value(norms_window, step):
 norms_window = []
 loss_window = []
 current_epoch = 0
+total_panic = 0
 clip_val = get_clip_value([], 0)
 optimizer = raw_model.configure_optimizers(weight_decay=weight_decay, learning_rate=max_lr * init_lr_pct, device_type=device_type, log=master_process)
 
