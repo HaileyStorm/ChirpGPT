@@ -11,6 +11,7 @@ import torch.distributed as dist
 import wandb
 import numpy as np
 from tqdm import tqdm
+from collections import OrderedDict
 
 # simple launch:
 # python train_gpt2.py
@@ -58,7 +59,7 @@ if master_process:
 T = 1024
 total_batch_size = T*32  # pick something about 32768
 # micro batch size
-B = 16
+B = 32
 
 
 assert total_batch_size % (B * T * ddp_world_size) == 0, "make sure total_batch_size is divisible by B * T * ddp_world_size"
@@ -75,6 +76,21 @@ torch.set_float32_matmul_precision('high')
 # create model
 model = GPT(GPTConfig(), init_weights=True)
 grads = None
+
+original_state_dict = torch.load('./BIRD_32khz_Small_model_41764.pt', map_location=torch.device('cpu'))
+
+# Corrected state dictionary
+state_dict = {
+    'model': OrderedDict([
+        (key.replace('_orig_mod.', ''), value) for key, value in original_state_dict['model'].items()
+    ]),
+    'config': original_state_dict['config'],
+    'step': original_state_dict['step'],
+    'val_loss': original_state_dict['val_loss']
+}
+
+#model.load_state_dict(state_dict['model'])
+
 model.to(device)
 use_compile = True
 if use_compile:
@@ -83,22 +99,22 @@ if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model # always contains the "raw" unwrapped model
 
-GROK_ALPHA = 0.9  # 0.9
-GROK_LAMB = 0.625  # 0.6667
-weight_decay = 0.13333  # 0.125
+GROK_ALPHA = 0.9
+GROK_LAMB = 0.625
+weight_decay = 0.13333
 
-max_lr = 2.3333e-3
+max_lr = 5e-4
 init_lr_pct = 0.075
-min_lr = max_lr * 0.05
+min_lr_pct = 0.05
 
 num_epochs = 18
 grad_clip_percentile = 0.1
 grad_clip_min = 1e-3
-grad_clip_max = 0.5  #1.5
-norms_window_size = 200
+grad_clip_max = 0.6
+norms_window_size = 300
 # Decrease lr when norm percentile & loss are increasing
-max_clip_slope = 1.075
-lr_adj_rate = 0.9  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps while conditions met
+max_clip_slope = 1.085
+lr_adj_rate = 0.925  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps while conditions met
 # Was 16000 for 24khz model, ~21000 for 32khz. Our goal is 610k +  (~2TB of 32khz audio if it were single epoch, or ~57.5GB tokenized)
 max_steps = (num_epochs * train_loader.total_tokens) // total_batch_size
 warmup_steps = int(max_steps*0.0825)
@@ -106,6 +122,7 @@ print(f"Max steps: {max_steps}, Warmup steps: {warmup_steps}")
 
 
 def get_lr(it):
+    min_lr = max_lr * min_lr_pct
     # 1) linear warmup for warmup_iters steps
     if it < warmup_steps:
         return max_lr * (init_lr_pct + (1.0 - init_lr_pct) * (float(it) / float(max(1, warmup_steps))))
@@ -120,7 +137,7 @@ def get_lr(it):
 
 
 def get_clip_value(norms_window, step):
-    global max_lr, total_panic
+    global max_lr, total_panic, optimizer, optimizer_resets
     if step < max(norms_window_size, warmup_steps * 0.5):
         return 1.0
     else:
@@ -137,17 +154,25 @@ def get_clip_value(norms_window, step):
         if step > warmup_steps * 0.5 and p3 > p2 > p1 and p3 / p2 > max_clip_slope and p2/p1 > max_clip_slope and l3 > l2 > l1:
             max_lr *= lr_adj_rate ** (3 / norms_window_size)
             total_panic += 1
+            if total_panic % (third * 2) == 0:
+                print("Too much panic: Resetting optimizer.")
+                optimizer = raw_model.configure_optimizers(weight_decay=weight_decay,
+                                                           learning_rate=get_lr(step), device_type=device_type,
+                                                           log=master_process)
+                optimizer_resets += 1
             wandb.log({
                 "debug/panic": 1.0,
                 "debug/total_panic": total_panic,
                 "debug/max_lr": max_lr,
-            })
+                "debug/optimizer_resets": optimizer_resets,
+            }, step=step)
         else:
             wandb.log({
                 "debug/panic": 0.0,
                 "debug/total_panic": total_panic,
                 "debug/max_lr": max_lr,
-            })
+                "debug/optimizer_resets": optimizer_resets,
+            }, step=step)
 
         return max(grad_clip_min, min(grad_clip_max, clip_value))
 
@@ -156,6 +181,7 @@ norms_window = []
 loss_window = []
 current_epoch = 0
 total_panic = 0
+optimizer_resets = 0
 clip_val = get_clip_value([], 0)
 optimizer = raw_model.configure_optimizers(weight_decay=weight_decay, learning_rate=max_lr * init_lr_pct, device_type=device_type, log=master_process)
 
@@ -195,7 +221,7 @@ for step in tqdm(range(max_steps), f"Training..."):
             #    f.write(f"{step} val {val_loss_accum.item():.4f}\n")
             wandb.log({
                 "val/loss": val_loss_accum.item()
-            })
+            }, step=step)
             if step > 0 and ((step % 1000 == 0) or last_step):
                 # optionally write model checkpoints
                 checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
@@ -265,7 +291,7 @@ for step in tqdm(range(max_steps), f"Training..."):
             "etc/clip_value": clip_val,
             "etc/toks_per_sec": tokens_per_sec,
             "train/loss": loss_accum.item()
-        })
+        }, step=step)
 
 if ddp:
     destroy_process_group()
