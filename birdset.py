@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 DATA_DIR = '/media/hailey/More/AI/gpt2audio/birdset_data_xcl'
+PREFIX = 'birds_xcl'
 SHARD_SIZE = 5 * 1024 * 1024  # 5MB in bytes
 CHUNK_LENGTH = 6  # seconds
 SUB_CHUNK_LENGTH = 3  # seconds
@@ -169,7 +170,7 @@ def process_audio(audio_bytes, is_train_split, detected_events=None, start_time=
 
 
 def get_next_shard_index(shard_type):
-    existing_shards = [f for f in os.listdir(DATA_DIR) if f.startswith(f'birds_{shard_type}_') and f.endswith('.npy')]
+    existing_shards = [f for f in os.listdir(DATA_DIR) if f.startswith(f'{PREFIX}_{shard_type}_') and f.endswith('.npy')]
     if not existing_shards:
         return 0
     return max([int(f.split('_')[2].split('.')[0]) for f in existing_shards]) + 1
@@ -189,7 +190,7 @@ def main(resume_index=0, datasets_to_use=DATASETS):
         nonlocal train_shard_index, val_shard_index
         if shard:
             shard_path = os.path.join(DATA_DIR,
-                                      f'birds_xcl_{shard_type}_{train_shard_index if shard_type == "train" else val_shard_index:04d}.npy')
+                                      f'{PREFIX}_{shard_type}_{train_shard_index if shard_type == "train" else val_shard_index:04d}.npy')
             np.save(shard_path, np.array(shard, dtype=np.int16))
             print(f"\nSaved {shard_type} shard: {shard_path}")
             if shard_type == 'train':
