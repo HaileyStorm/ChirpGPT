@@ -3,7 +3,31 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import inspect
-import numpy as np
+
+
+@dataclass
+class GPTConfig:
+    # max sequence length
+    block_size: int = 1024
+    vocab_size: int = 4112
+
+    # WIDE
+    # max_lr ~ 2.333e-3, grad_clip_max ~ 0.5
+    #n_layer: int = 11
+    #n_head: int = 16
+    #n_embd: int = 1152
+
+    # NARROW(er)
+    # max_lr ~ 2e-4, grad_clip_max ~ 0.6667
+    #n_layer: int = 20
+    #n_head: int = 14
+    #n_embd: int = 854
+
+    # SMALL (and a somewhat narrow)
+    # max_lr ~ 5e-4????, grad_clip_max ~ 0.6667 (or less)
+    n_layer: int = 10
+    n_head: int = 8
+    n_embd: int = 576
 
 
 class CausalSelfAttention(nn.Module):
@@ -68,17 +92,8 @@ class Block(nn.Module):
         return x
 
 
-@dataclass
-class GPTConfig:
-    block_size: int = 1024 # max sequence length
-    vocab_size: int = 4112 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
-    n_layer: int = 11 # number of layers
-    n_head: int = 16 # number of heads
-    n_embd: int = 1152 # embedding dimension
-
-
 class GPT(nn.Module):
-    def __init__(self, config, init_weights=False):
+    def __init__(self, config: GPTConfig, init_weights=False):
         super().__init__()
         self.config = config
 

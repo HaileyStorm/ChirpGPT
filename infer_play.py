@@ -16,7 +16,7 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 print(f"using device: {device}")
 model = GPT(GPTConfig())
 
-original_state_dict = torch.load('./log/model_41764.pt', map_location=torch.device('cpu'))
+original_state_dict = torch.load('./log/model_16000.pt', map_location=torch.device('cpu'))
 
 # Corrected state dictionary
 state_dict = {
@@ -47,7 +47,7 @@ tokens = torch.tensor(tokens, dtype=torch.long)
 tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
 xgen = tokens.to(device)
 sample_rng = torch.Generator(device=device)
-#sample_rng.manual_seed(42)
+sample_rng.manual_seed(42)
 
 output_tokens = []
 
