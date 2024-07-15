@@ -61,7 +61,7 @@ def generate_audio(model, input_tokens, tokenizer, num_return_sequences=1, max_n
             next_token = torch.multinomial(probs, num_samples=1)
             input_tokens = torch.cat([input_tokens, next_token], dim=1)
 
-    return input_tokens[:, -(max_new_tokens+1):]  # Return only the newly generated tokens
+    return input_tokens[:, -(max_new_tokens+1):]  # Return only the newly generated tokens (and the separator from the end of the input)
 
 
 def main():
