@@ -77,17 +77,17 @@ torch.set_float32_matmul_precision('high')
 model = GPT(GPTConfig(), init_weights=True)
 grads = None
 
-original_state_dict = torch.load('./BIRD_32khz_Small_model_41764.pt', map_location=torch.device('cpu'))
+#original_state_dict = torch.load('./BIRD_32khz_Small_model_41764.pt', map_location=torch.device('cpu'))
 
 # Corrected state dictionary
-state_dict = {
-    'model': OrderedDict([
-        (key.replace('_orig_mod.', ''), value) for key, value in original_state_dict['model'].items()
-    ]),
-    'config': original_state_dict['config'],
-    'step': original_state_dict['step'],
-    'val_loss': original_state_dict['val_loss']
-}
+#state_dict = {
+#    'model': OrderedDict([
+#        (key.replace('_orig_mod.', ''), value) for key, value in original_state_dict['model'].items()
+#    ]),
+#    'config': original_state_dict['config'],
+#    'step': original_state_dict['step'],
+#    'val_loss': original_state_dict['val_loss']
+#}
 
 #model.load_state_dict(state_dict['model'])
 
@@ -199,7 +199,7 @@ for step in tqdm(range(max_steps), f"Training..."):
     # once in a while evaluate our validation loss
     if step % 100 == 0 or last_step:
         model.eval()
-        val_loader.reset()
+        #val_loader.reset()
         with torch.no_grad():
             val_loss_accum = 0.0
             val_loss_steps = 15
