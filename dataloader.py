@@ -19,7 +19,7 @@ class DataLoaderLite:
             random.seed(seed)
             np.random.seed(seed)
 
-        data_root = "./birdset_data_shuffled"
+        data_root = "./birdset_data_trainOnly_shuffled"
         shards = os.listdir(data_root)
         shards = [s for s in shards if split in s]
         shards = sorted(shards)

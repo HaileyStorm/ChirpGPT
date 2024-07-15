@@ -12,8 +12,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-DATA_DIR = '/media/hailey/More/AI/gpt2audio/birdset_data_xcl'
-PREFIX = 'birds_xcl'
+DATA_DIR = '/media/hailey/More/AI/gpt2audio/birdset_data_noXCL_trainOnly'
+PREFIX = 'birds_notest'
 SHARD_SIZE = 5 * 1024 * 1024  # 5MB in bytes
 CHUNK_LENGTH = 6  # seconds
 SUB_CHUNK_LENGTH = 3  # seconds
@@ -21,10 +21,10 @@ SUB_CHUNK_LENGTH = 3  # seconds
 # Dataset configuration
 DATASETS = {
     'XCL': ['train'],
-    'HSN': ['train', 'test'],
+    'HSN': ['train'], #, 'test'],
     'POW': ['train', 'test'],  # 100% will fail current lat/long filter
     'SSW': ['train', 'test'],  # 100% will fail current lat/long filter
-    'SNE': ['train', 'test']
+    'SNE': ['train'] #, 'test']
 }
 
 # Initialize tokenizer
@@ -173,7 +173,7 @@ def get_next_shard_index(shard_type):
     existing_shards = [f for f in os.listdir(DATA_DIR) if f.startswith(f'{PREFIX}_{shard_type}_') and f.endswith('.npy')]
     if not existing_shards:
         return 0
-    return max([int(f.split('_')[2].split('.')[0]) for f in existing_shards]) + 1
+    return max([int(f.split('_')[-1].split('.')[0]) for f in existing_shards]) + 1
 
 
 def main(resume_index=0, datasets_to_use=DATASETS):
@@ -205,7 +205,7 @@ def main(resume_index=0, datasets_to_use=DATASETS):
             dataset = load_dataset('DBD-research-group/BirdSet', subset, split=split, streaming=True, trust_remote_code=True)
             is_train_split = split == 'train'
 
-            for i, example in tqdm(enumerate(dataset), desc=f"Processing {subset} {split}", total=528434):
+            for i, example in tqdm(enumerate(dataset), desc=f"Processing {subset} {split}"):
                 if i < resume_index:
                     continue
                 resume_index = 0
@@ -237,7 +237,7 @@ def main(resume_index=0, datasets_to_use=DATASETS):
                                 current_train_shard, current_train_shard_size = save_shard(current_train_shard,
                                                                                            current_train_shard_size,
                                                                                            'train')
-                    if i % 25000 == 0:
+                    if i % 10000 == 0:
                         current_train_shard, current_train_shard_size = save_shard(current_train_shard,
                                                                                    current_train_shard_size, 'train')
                         current_val_shard, current_val_shard_size = save_shard(current_val_shard,
@@ -250,5 +250,5 @@ def main(resume_index=0, datasets_to_use=DATASETS):
 
 if __name__ == "__main__":
     # Example: Exclude XCL, POW, and SSW
-    datasets_to_use = {k: v for k, v in DATASETS.items() if k not in ['POW', 'SSW', 'HSN', 'SNE']}
-    main(resume_index=200001, datasets_to_use=datasets_to_use)
+    datasets_to_use = {k: v for k, v in DATASETS.items() if k not in ['POW', 'SSW', 'XCL']}
+    main(resume_index=0, datasets_to_use=datasets_to_use)

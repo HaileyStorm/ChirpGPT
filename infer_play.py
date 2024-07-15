@@ -16,7 +16,7 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 print(f"using device: {device}")
 model = GPT(GPTConfig())
 
-original_state_dict = torch.load('./log/model_16000.pt', map_location=torch.device('cpu'))
+original_state_dict = torch.load('./log/model_64432.pt', map_location=torch.device('cpu'))
 
 # Corrected state dictionary
 state_dict = {
@@ -35,7 +35,7 @@ model.to(device)
 unseen = [4097, 547, 426, 2825, 1441, 2209, 1300, 161, 4097, 1646]
 seperator = 4097
 
-num_return_sequences = 4
+num_return_sequences = 8
 # 3s @ 32khz = 512 tokens
 # So, 1024, our max sequence length = 6 seconds. Need to either get an extra token to get the ending separator, or
 # append our own separator at the end (or assume it should be there and remove the find last separator logic).
@@ -47,7 +47,7 @@ tokens = torch.tensor(tokens, dtype=torch.long)
 tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
 xgen = tokens.to(device)
 sample_rng = torch.Generator(device=device)
-sample_rng.manual_seed(42)
+sample_rng.manual_seed(1337)
 
 output_tokens = []
 

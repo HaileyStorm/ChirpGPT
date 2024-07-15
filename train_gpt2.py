@@ -105,9 +105,9 @@ weight_decay = 0.13333
 
 max_lr = 5e-4
 init_lr_pct = 0.075
-min_lr_pct = 0.05
+min_lr_pct = 0.025
 
-num_epochs = 18
+num_epochs = 25
 grad_clip_percentile = 0.1
 grad_clip_min = 1e-3
 grad_clip_max = 0.65
