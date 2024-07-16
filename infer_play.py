@@ -16,7 +16,7 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 print(f"using device: {device}")
 model = GPT(GPTConfig())
 
-original_state_dict = torch.load('./BIRD_FINAL_32khz_Small_NoTest_model_64432.pt', map_location=torch.device('cpu'))
+original_state_dict = torch.load('./log/model_02000.pt', map_location=torch.device('cpu'))
 
 # Corrected state dictionary
 state_dict = {
@@ -96,6 +96,6 @@ def find_last_instance_of_seperator(lst, element=4097):
 
 
 for i in range(num_return_sequences):
-    print(np.array([output_tokens[i][:find_last_instance_of_seperator(output_tokens[i]) + 1]]))
+    #print(np.array([output_tokens[i][:find_last_instance_of_seperator(output_tokens[i]) + 1]]))
     audio_out = tokenizer.decode(np.array([output_tokens[i][:find_last_instance_of_seperator(output_tokens[i]) + 1]]))
     write(f'test_{i}.wav', tokenizer.sample_rate, audio_out.cpu().detach().numpy())

@@ -12,6 +12,7 @@ import wandb
 import numpy as np
 from tqdm import tqdm
 from collections import OrderedDict
+from torch.nn import functional as F
 
 # simple launch:
 # python train_gpt2.py
@@ -59,7 +60,7 @@ if master_process:
 T = 1024
 total_batch_size = T*32  # pick something about 32768
 # micro batch size
-B = 32
+B = 16
 
 
 assert total_batch_size % (B * T * ddp_world_size) == 0, "make sure total_batch_size is divisible by B * T * ddp_world_size"
@@ -103,9 +104,10 @@ GROK_ALPHA = 0.9
 GROK_LAMB = 0.625
 weight_decay = 0.13333
 
-max_lr = 5e-4
-init_lr_pct = 0.075
+max_lr = 4.75e-4
+init_lr_pct = 0.06667
 min_lr_pct = 0.025
+neg_loss_weight = 0.6667
 
 num_epochs = 25
 grad_clip_percentile = 0.1
@@ -117,7 +119,7 @@ max_clip_slope = 1.085
 lr_adj_rate = 0.925  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps while conditions met
 # Was 16000 for 24khz model, ~21000 for 32khz. Our goal is 610k +  (~2TB of 32khz audio if it were single epoch, or ~57.5GB tokenized)
 max_steps = (num_epochs * train_loader.total_tokens) // total_batch_size
-warmup_steps = int(max_steps*0.0825)
+warmup_steps = int(max_steps*0.07)
 print(f"Max steps: {max_steps}, Warmup steps: {warmup_steps}")
 
 
@@ -204,13 +206,17 @@ for step in tqdm(range(max_steps), f"Training..."):
             val_loss_accum = 0.0
             val_loss_steps = 15
             for _ in range(val_loss_steps):
-                x, y = val_loader.next_batch()
-                x, y = x.to(device), y.to(device)
+                x1, x2, y, _, _ = val_loader.next_batch()
+                x = torch.cat([x1, x2], dim=1).to(device)
+                y = y.to(device)
                 if 'cuda' in device:
                     with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                        logits, loss = model(x, y)
+                        logits, _ = model(x)
+                        loss = F.cross_entropy(logits[:, -512:].contiguous().view(-1, logits.size(-1)), y.view(-1))
                 else:
-                    logits, loss = model(x, y)
+                    logits, _ = model(x)
+                    loss = F.cross_entropy(logits[:, -512:].contiguous().view(-1, logits.size(-1)), y.view(-1))
+
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
         if ddp:
@@ -239,29 +245,55 @@ for step in tqdm(range(max_steps), f"Training..."):
     # do one step of the optimization
     model.train()
     optimizer.zero_grad()
-    loss_accum = 0.0
+    loss_accum_pos = 0.0
+    loss_accum_neg = 0.0
+    loss_accum_combined = 0.0
+
     for micro_step in range(grad_accum_steps):
-        x, y = train_loader.next_batch()
-        x, y = x.to(device), y.to(device)
+        x1_pos, x2_pos, y_pos, x2_neg, y_neg = train_loader.next_batch()
+
+        x_pos = torch.cat([x1_pos, x2_pos], dim=1).to(device)
+        y_pos = y_pos.to(device)
+        x_neg = torch.cat([x1_pos, x2_neg], dim=1).to(device)
+        y_neg = y_neg.to(device)
+
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-            logits, loss = model(x, y)
-        # we have to scale the loss to account for gradient accumulation,
-        # because the gradients just add on each successive backward().
-        # addition of gradients corresponds to a SUM in the objective, but
-        # instead of a SUM we want MEAN. Scale the loss here so it comes out right
+            logits_pos, _ = model(x_pos)
+            logits_neg, _ = model(x_neg)
+
+            # Calculate loss only for the second chunk
+            loss_pos = F.cross_entropy(logits_pos[:, -512:].contiguous().view(-1, logits_pos.size(-1)), y_pos.view(-1))
+            loss_neg = F.cross_entropy(logits_neg[:, -512:].contiguous().view(-1, logits_neg.size(-1)), y_neg.view(-1))
+
+            # Combine losses
+            warmup_factor = min(step / (2.0 * warmup_steps), 1.0)
+            # Clamp loss_neg so the division doesn't get nasty
+            clamped_loss_neg = torch.clamp(loss_neg, min=0.75 * loss_pos, max=1.3333 * loss_pos)
+            # Gradually introduce the negative loss
+            #loss = loss_pos / (1.0 + warmup_factor * (clamped_loss_neg - 1.0) * neg_loss_weight + 1e-8)
+            loss = loss_pos + ((loss_pos / clamped_loss_neg) * warmup_factor * neg_loss_weight)
+
+        loss_accum_pos += loss_pos.detach() / grad_accum_steps
+        loss_accum_neg += loss_neg.detach() / grad_accum_steps
+        loss_accum_combined += loss.detach() / grad_accum_steps
         loss = loss / grad_accum_steps
-        loss_accum += loss.detach()
+
         if ddp:
             model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
         loss.backward()
+
         if step >= (warmup_steps * 0.6667):
-            grads = gradfilter_ema(model, grads=grads, alpha=GROK_ALPHA, lamb=GROK_LAMB * (min(1.0, step / (warmup_steps * 1.5)) ** 3))
+            grads = gradfilter_ema(model, grads=grads, alpha=GROK_ALPHA,
+                                   lamb=GROK_LAMB * (min(1.0, step / (warmup_steps * 1.5)) ** 3))
+
     if ddp:
-        dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
+        dist.all_reduce(loss_accum_pos, op=dist.ReduceOp.AVG)
+        dist.all_reduce(loss_accum_neg, op=dist.ReduceOp.AVG)
+        dist.all_reduce(loss_accum_combined, op=dist.ReduceOp.AVG)
     clip_val = get_clip_value(norms_window, step)
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), clip_val)
     norms_window.append(norm.item())
-    loss_window.append(loss_accum.item())
+    loss_window.append(loss_accum_combined.item())
     if len(norms_window) > norms_window_size:
         norms_window.pop(0)
         loss_window.pop(0)
@@ -290,7 +322,9 @@ for step in tqdm(range(max_steps), f"Training..."):
             "etc/norm": norm.item(),
             "etc/clip_value": clip_val,
             "etc/toks_per_sec": tokens_per_sec,
-            "train/loss": loss_accum.item()
+            "train/loss_combined": loss_accum_combined.item(),
+            "train/loss_pos": loss_accum_pos.item(),
+            "train/loss_neg": loss_accum_neg.item(),
         }, step=step)
 
 if ddp:

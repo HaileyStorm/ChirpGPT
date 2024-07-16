@@ -71,19 +71,13 @@ class DataLoaderLite:
         self.num_batches = self.num_T_blocks // (self.B * self.num_processes)
 
         # Create shuffled indices for all critical blocks in the shard
-        self.block_order = np.arange(self.num_critical_blocks)
-        np.random.shuffle(self.block_order)
+        self.block_order = np.arange(self.num_T_blocks)
+        #np.random.shuffle(self.block_order)
 
     def get_block(self, block_index):
-        start = block_index * self.critical_divisor
+        start = block_index * self.T
         end = start + self.T
-        if end <= len(self.tokens):
-            return self.tokens[start:end]
-        else:
-            # Wrap to the next shard
-            next_shard = (self.current_shard + 1) % len(self.shards)
-            next_tokens = self.load_tokens(self.shards[next_shard])
-            return torch.cat([self.tokens[start:], next_tokens[:end - len(self.tokens)]])
+        return self.tokens[start:end]
 
     def next_batch(self):
         if self.current_batch >= self.num_batches:
@@ -100,25 +94,21 @@ class DataLoaderLite:
         # Select the blocks for this process
         process_blocks = batch_blocks[self.process_rank::self.num_processes]
 
-        # Gather the tokens for these blocks
-        x = torch.stack([self.get_block(i) for i in process_blocks])
+        x1 = torch.stack([self.get_block(i)[:self.critical_divisor] for i in process_blocks])
+        x2 = torch.stack([self.get_block(i)[self.critical_divisor:] for i in process_blocks])
 
-        # For y, we need to handle the case where we're at the last block
-        y_list = []
-        for i in process_blocks:
-            current_block = self.get_block(i)
-            if i < self.num_critical_blocks - 1:
-                next_block = self.get_block(i + 1)
-                y_list.append(torch.cat([current_block[1:], next_block[:1]]))
-            else:
-                # If it's the last block, wrap to the first block of the next shard
-                next_block = self.get_block(0)  # This will automatically load from the next shard
-                y_list.append(torch.cat([current_block[1:], next_block[:1]]))
+        y_pos = torch.stack([self.get_block(i)[self.critical_divisor+1:] for i in process_blocks])
+        separator_token = torch.full((y_pos.size(0), 1), 4097, dtype=y_pos.dtype, device=y_pos.device)
+        y_pos = torch.cat([y_pos, separator_token], dim=1)
 
-        y = torch.stack(y_list)
+        r = np.random.randint(0, self.num_T_blocks)
+        x2_neg = torch.stack([self.get_block(r)[self.critical_divisor:] for _ in process_blocks])
+        y_neg = torch.stack([self.get_block(r)[self.critical_divisor + 1:] for _ in process_blocks])
+        separator_token = torch.full((y_neg.size(0), 1), 4097, dtype=y_neg.dtype, device=y_neg.device)
+        y_neg = torch.cat([y_neg, separator_token], dim=1)
 
         self.current_batch += 1
-        return x, y
+        return x1, x2, y_pos, x2_neg, y_neg
 
     def __len__(self):
         total_critical_blocks = sum(len(self.load_tokens(shard)) // self.critical_divisor for shard in self.shards)
