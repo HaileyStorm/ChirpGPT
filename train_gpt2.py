@@ -58,9 +58,9 @@ if master_process:
 
 # sequence length
 T = 1024
-total_batch_size = T*32  # pick something about 32768
+total_batch_size = T*48  # pick something about 32768
 # micro batch size
-B = 16
+B = 48
 
 
 assert total_batch_size % (B * T * ddp_world_size) == 0, "make sure total_batch_size is divisible by B * T * ddp_world_size"
@@ -78,17 +78,17 @@ torch.set_float32_matmul_precision('high')
 model = GPT(GPTConfig(), init_weights=True)
 grads = None
 
-#original_state_dict = torch.load('./BIRD_32khz_Small_model_41764.pt', map_location=torch.device('cpu'))
+original_state_dict = torch.load('./BIRD_FINAL_32khz_Small_NoTest_model_64432.pt', map_location=torch.device('cpu'))
 
 # Corrected state dictionary
-#state_dict = {
-#    'model': OrderedDict([
-#        (key.replace('_orig_mod.', ''), value) for key, value in original_state_dict['model'].items()
-#    ]),
-#    'config': original_state_dict['config'],
-#    'step': original_state_dict['step'],
-#    'val_loss': original_state_dict['val_loss']
-#}
+state_dict = {
+    'model': OrderedDict([
+        (key.replace('_orig_mod.', ''), value) for key, value in original_state_dict['model'].items()
+    ]),
+    'config': original_state_dict['config'],
+    'step': original_state_dict['step'],
+    'val_loss': original_state_dict['val_loss']
+}
 
 #model.load_state_dict(state_dict['model'])
 
@@ -100,26 +100,26 @@ if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model # always contains the "raw" unwrapped model
 
-GROK_ALPHA = 0.9
-GROK_LAMB = 0.625
-weight_decay = 0.13333
+GROK_ALPHA = 0.96
+GROK_LAMB = 0.991
+weight_decay = 0.113333
 
-max_lr = 4.75e-4
-init_lr_pct = 0.06667
-min_lr_pct = 0.025
+max_lr = 3.9e-4
+init_lr_pct = 0.075
+min_lr_pct = 0.17
 neg_loss_weight = 0.6667
 
-num_epochs = 25
-grad_clip_percentile = 0.1
+num_epochs = 13  # At 170MB tokenized data, val starts increasing ~epoch 5-6
+grad_clip_percentile = 0.0875
 grad_clip_min = 1e-3
-grad_clip_max = 0.65
-norms_window_size = 300
+grad_clip_max = 0.85
+norms_window_size = 350
 # Decrease lr when norm percentile & loss are increasing
-max_clip_slope = 1.085
+max_clip_slope = 1.1
 lr_adj_rate = 0.925  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps while conditions met
 # Was 16000 for 24khz model, ~21000 for 32khz. Our goal is 610k +  (~2TB of 32khz audio if it were single epoch, or ~57.5GB tokenized)
 max_steps = (num_epochs * train_loader.total_tokens) // total_batch_size
-warmup_steps = int(max_steps*0.07)
+warmup_steps = int(max_steps*0.0575)
 print(f"Max steps: {max_steps}, Warmup steps: {warmup_steps}")
 
 
@@ -140,8 +140,8 @@ def get_lr(it):
 
 def get_clip_value(norms_window, step):
     global max_lr, total_panic, optimizer, optimizer_resets
-    if step < max(norms_window_size, warmup_steps * 0.5):
-        return 1.0
+    if step < max(norms_window_size, warmup_steps * 2.5):
+        return grad_clip_max
     else:
         clip_value = np.percentile(norms_window, grad_clip_percentile * 100)
 
@@ -179,6 +179,7 @@ def get_clip_value(norms_window, step):
         return max(grad_clip_min, min(grad_clip_max, clip_value))
 
 
+best_val_loss = 999.9
 norms_window = []
 loss_window = []
 current_epoch = 0
@@ -199,12 +200,11 @@ for step in tqdm(range(max_steps), f"Training..."):
     last_step = (step == max_steps - 1)
 
     # once in a while evaluate our validation loss
-    if step % 100 == 0 or last_step:
+    if step % 200 == 0 or last_step:
         model.eval()
-        #val_loader.reset()
         with torch.no_grad():
             val_loss_accum = 0.0
-            val_loss_steps = 15
+            val_loss_steps = 50
             for _ in range(val_loss_steps):
                 x1, x2, y, _, _ = val_loader.next_batch()
                 x = torch.cat([x1, x2], dim=1).to(device)
@@ -228,9 +228,11 @@ for step in tqdm(range(max_steps), f"Training..."):
             wandb.log({
                 "val/loss": val_loss_accum.item()
             }, step=step)
-            if step > 0 and ((step % 1000 == 0) or last_step):
+            if last_step or (step > warmup_steps and val_loss_accum.item() < best_val_loss):
+                best_val_loss = min(best_val_loss, val_loss_accum.item())
+            #if step > 0 and (step % 1600 == 0 or last_step):
                 # optionally write model checkpoints
-                checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
+                checkpoint_path = os.path.join(log_dir, f"model_s{step:05d}_vl{best_val_loss:.4f}.pt")
                 print(f"writing checkpoint to {checkpoint_path}")
                 checkpoint = {
                     'model': raw_model.state_dict(),
@@ -254,27 +256,27 @@ for step in tqdm(range(max_steps), f"Training..."):
 
         x_pos = torch.cat([x1_pos, x2_pos], dim=1).to(device)
         y_pos = y_pos.to(device)
-        x_neg = torch.cat([x1_pos, x2_neg], dim=1).to(device)
-        y_neg = y_neg.to(device)
+        #x_neg = torch.cat([x1_pos, x2_neg], dim=1).to(device)
+        #y_neg = y_neg.to(device)
 
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
             logits_pos, _ = model(x_pos)
-            logits_neg, _ = model(x_neg)
+            #logits_neg, _ = model(x_neg)
 
             # Calculate loss only for the second chunk
             loss_pos = F.cross_entropy(logits_pos[:, -512:].contiguous().view(-1, logits_pos.size(-1)), y_pos.view(-1))
-            loss_neg = F.cross_entropy(logits_neg[:, -512:].contiguous().view(-1, logits_neg.size(-1)), y_neg.view(-1))
+            #loss_neg = F.cross_entropy(logits_neg[:, -512:].contiguous().view(-1, logits_neg.size(-1)), y_neg.view(-1))
 
             # Combine losses
-            warmup_factor = min(step / (2.0 * warmup_steps), 1.0)
+            warmup_factor = 1.0 #min(step / (2.0 * warmup_steps), 1.0)
             # Clamp loss_neg so the division doesn't get nasty
-            clamped_loss_neg = torch.clamp(loss_neg, min=0.75 * loss_pos, max=1.3333 * loss_pos)
+            #clamped_loss_neg = torch.clamp(loss_neg, min=0.6667 * loss_pos, max=1.5 * loss_pos)
             # Gradually introduce the negative loss
             #loss = loss_pos / (1.0 + warmup_factor * (clamped_loss_neg - 1.0) * neg_loss_weight + 1e-8)
-            loss = loss_pos + ((loss_pos / clamped_loss_neg) * warmup_factor * neg_loss_weight)
+            loss = loss_pos #+ ((loss_pos / clamped_loss_neg) * warmup_factor * neg_loss_weight)
 
         loss_accum_pos += loss_pos.detach() / grad_accum_steps
-        loss_accum_neg += loss_neg.detach() / grad_accum_steps
+        #loss_accum_neg += loss_neg.detach() / grad_accum_steps
         loss_accum_combined += loss.detach() / grad_accum_steps
         loss = loss / grad_accum_steps
 
@@ -288,7 +290,7 @@ for step in tqdm(range(max_steps), f"Training..."):
 
     if ddp:
         dist.all_reduce(loss_accum_pos, op=dist.ReduceOp.AVG)
-        dist.all_reduce(loss_accum_neg, op=dist.ReduceOp.AVG)
+        #dist.all_reduce(loss_accum_neg, op=dist.ReduceOp.AVG)
         dist.all_reduce(loss_accum_combined, op=dist.ReduceOp.AVG)
     clip_val = get_clip_value(norms_window, step)
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), clip_val)
@@ -324,7 +326,7 @@ for step in tqdm(range(max_steps), f"Training..."):
             "etc/toks_per_sec": tokens_per_sec,
             "train/loss_combined": loss_accum_combined.item(),
             "train/loss_pos": loss_accum_pos.item(),
-            "train/loss_neg": loss_accum_neg.item(),
+           # "train/loss_neg": loss_accum_neg.item(),
         }, step=step)
 
 if ddp:

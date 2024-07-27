@@ -69,7 +69,7 @@ def main():
 
     # Load model
     model = GPT(GPTConfig())
-    state_dict = torch.load('./BIRD_FINAL_32khz_Small_NoTest_model_64432.pt', map_location=device)
+    state_dict = torch.load('./log/model_s09000_vl4.9196.pt', map_location=device)
     corrected_state_dict = OrderedDict(
         [(key.replace('_orig_mod.', ''), value) for key, value in state_dict['model'].items()])
     model.load_state_dict(corrected_state_dict)

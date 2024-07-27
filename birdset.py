@@ -40,12 +40,12 @@ def filter_example(example, is_train_split):
         return False
     if length is None:
         # chunk_audio will handle it if it turns out to be shorter
-        length = 6
+        length = CHUNK_LENGTH
 
     base_condition = (
             33 <= latitude <= 51 and
             -125 <= longitude <= -85 and
-            length >= 6
+            length >= CHUNK_LENGTH
     )
 
     if is_train_split:
@@ -53,18 +53,18 @@ def filter_example(example, is_train_split):
         num_events = len(example['detected_events'])
         if quality is None or num_events is None:
             return False
-        return base_condition and (quality == 'A' or quality == 'B') and num_events >= length // 6
+        return base_condition and (quality == 'A' or quality == 'B') and num_events >= length // CHUNK_LENGTH
     else:
         return base_condition
 
 
 def chunk_audio(waveform, sample_rate, is_train_split, detected_events=None, start_time=None, end_time=None):
     if not is_train_split:
-        # For test splits, create a single 6-second chunk centered around the vocalization
+        # For test splits, create a single CHUNK_LENGTH-second chunk centered around the vocalization
         center = (start_time + end_time) / 2
-        chunk_start = max(0, center - 3)
-        chunk_end = min(waveform.shape[1] / sample_rate, chunk_start + 6)
-        chunk_start = max(0, chunk_end - 6)  # Ensure full 6 seconds
+        chunk_start = max(0, center - SUB_CHUNK_LENGTH)
+        chunk_end = min(waveform.shape[1] / sample_rate, chunk_start + CHUNK_LENGTH)
+        chunk_start = max(0, chunk_end - CHUNK_LENGTH)  # Ensure full CHUNK_LENGTH
         chunk = waveform[:, int(chunk_start * sample_rate):int(chunk_end * sample_rate)]
         #logger.info(f"Test split: Created chunk from {chunk_start:.2f}s to {chunk_end:.2f}s")
         return [chunk]
@@ -75,7 +75,7 @@ def chunk_audio(waveform, sample_rate, is_train_split, detected_events=None, sta
     previous_chunk_end = 0
 
     def add_chunk(start, end):
-        if end - start >= 6 and end <= audio_length:
+        if end - start >= CHUNK_LENGTH and end <= audio_length:
             chunk = waveform[:, int(start * sample_rate):int(end * sample_rate)]
             chunks.append(chunk)
             #logger.info(f"Added chunk: {start:.2f}s to {end:.2f}s")
@@ -89,11 +89,11 @@ def chunk_audio(waveform, sample_rate, is_train_split, detected_events=None, sta
         event_start, event_end = detected_events[i]
         event_duration = event_end - event_start
 
-        if event_duration >= 6:
-            # Handle events longer than 6 seconds
+        if event_duration >= CHUNK_LENGTH:
+            # Handle events longer than CHUNK_LENGTH seconds
             chunk_start = max(event_start, previous_chunk_end)
             while chunk_start < event_end:
-                chunk_end = chunk_start + 6
+                chunk_end = chunk_start + CHUNK_LENGTH
                 # Check if we can include the next full event(s)
                 next_event_index = i + 1
                 while next_event_index < len(detected_events) and detected_events[next_event_index][1] <= chunk_end:
@@ -107,16 +107,16 @@ def chunk_audio(waveform, sample_rate, is_train_split, detected_events=None, sta
         else:
             # Try to create a chunk with multiple events
             chunk_start = max(event_start, previous_chunk_end)
-            chunk_end = min(audio_length, chunk_start + 6)
+            chunk_end = min(audio_length, chunk_start + CHUNK_LENGTH)
             next_event_index = i + 1
 
-            # Include as many events as possible within 6 seconds
+            # Include as many events as possible within CHUNK_LENGTH seconds
             while next_event_index < len(detected_events) and detected_events[next_event_index][1] <= chunk_end:
                 next_event_index += 1
 
             # Adjust chunk_end to include the last partial event if possible
             if next_event_index < len(detected_events) and detected_events[next_event_index][0] < chunk_end:
-                if detected_events[next_event_index][1] - chunk_start <= 6:
+                if detected_events[next_event_index][1] - chunk_start <= CHUNK_LENGTH:
                     chunk_end = min(audio_length, detected_events[next_event_index][1])
                     next_event_index += 1
 

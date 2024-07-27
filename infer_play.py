@@ -16,7 +16,7 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 print(f"using device: {device}")
 model = GPT(GPTConfig())
 
-original_state_dict = torch.load('./log/model_02000.pt', map_location=torch.device('cpu'))
+original_state_dict = torch.load('./log/model_54000.pt', map_location=torch.device('cpu'))
 
 # Corrected state dictionary
 state_dict = {
@@ -32,16 +32,14 @@ model.load_state_dict(state_dict['model'])
 model.eval()
 model.to(device)
 
-unseen = [4097, 547, 426, 2825, 1441, 2209, 1300, 161, 4097, 1646]
 seperator = 4097
 
-num_return_sequences = 8
+num_return_sequences = 4
 # 3s @ 32khz = 512 tokens
 # So, 1024, our max sequence length = 6 seconds. We could reduce this by one and append the final separator token manually.
 max_length = 1024
 
 tokens = [seperator]
-#tokens = unseen
 tokens = torch.tensor(tokens, dtype=torch.long)
 tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
 xgen = tokens.to(device)
@@ -96,6 +94,8 @@ def find_last_instance_of_seperator(lst, element=4097):
 
 
 for i in range(num_return_sequences):
+    print(np.array([output_tokens[i]]))
     #print(np.array([output_tokens[i][:find_last_instance_of_seperator(output_tokens[i]) + 1]]))
-    audio_out = tokenizer.decode(np.array([output_tokens[i][:find_last_instance_of_seperator(output_tokens[i]) + 1]]))
+    #audio_out = tokenizer.decode(np.array([output_tokens[i][:find_last_instance_of_seperator(output_tokens[i]) + 1]]))
+    audio_out = tokenizer.decode(np.array([output_tokens[i]]))
     write(f'test_{i}.wav', tokenizer.sample_rate, audio_out.cpu().detach().numpy())

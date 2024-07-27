@@ -10,3 +10,4 @@ data_*/*
 \!NOTES-birds.txt
 venv
 *.wav
+wandb
