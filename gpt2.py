@@ -8,7 +8,7 @@ import inspect
 @dataclass
 class GPTConfig:
     # max sequence length
-    block_size: int = 1024
+    block_size: int = 1536
     vocab_size: int = 4112
 
     # WIDE

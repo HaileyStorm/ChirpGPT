@@ -57,10 +57,13 @@ if master_process:
     wandb.init(project="ChirpGPT")
 
 # sequence length
-T = 1024
+T = 1536
 total_batch_size = T*48  # pick something about 32768
 # micro batch size
-B = 48
+B = 24
+
+chunk_size = T // 2
+print(f"Chunk size: {chunk_size}")
 
 
 assert total_batch_size % (B * T * ddp_world_size) == 0, "make sure total_batch_size is divisible by B * T * ddp_world_size"
@@ -69,13 +72,13 @@ if master_process:
     print(f"total desired batch size: {total_batch_size}")
     print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
-train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train", ddp=ddp, master_process=master_process)
-val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val", ddp=ddp, master_process=master_process)
+train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train", ddp=ddp, master_process=master_process, critical_divisor=chunk_size)
+val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val", ddp=ddp, master_process=master_process, critical_divisor=chunk_size)
 
 torch.set_float32_matmul_precision('high')
 
 # create model
-model = GPT(GPTConfig(), init_weights=True)
+model = GPT(GPTConfig(block_size=T), init_weights=True)
 grads = None
 
 original_state_dict = torch.load('./BIRD_FINAL_32khz_Small_NoTest_model_64432.pt', map_location=torch.device('cpu'))
@@ -100,16 +103,16 @@ if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model # always contains the "raw" unwrapped model
 
-GROK_ALPHA = 0.96
-GROK_LAMB = 0.991
+GROK_ALPHA = 0.925 #0.96
+GROK_LAMB = 1.1  #0.991
 weight_decay = 0.113333
 
-max_lr = 3.9e-4
-init_lr_pct = 0.075
-min_lr_pct = 0.17
+max_lr = 3.5e-4  #3.9e-4
+init_lr_pct = 0.06667
+min_lr_pct = 0.01 #0.17
 neg_loss_weight = 0.6667
 
-num_epochs = 13  # At 170MB tokenized data, val starts increasing ~epoch 5-6
+num_epochs = 6 #25 #13  # At 170MB tokenized data, val starts increasing ~epoch 5-6
 grad_clip_percentile = 0.0875
 grad_clip_min = 1e-3
 grad_clip_max = 0.85
@@ -117,9 +120,9 @@ norms_window_size = 350
 # Decrease lr when norm percentile & loss are increasing
 max_clip_slope = 1.1
 lr_adj_rate = 0.925  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps while conditions met
-# Was 16000 for 24khz model, ~21000 for 32khz. Our goal is 610k +  (~2TB of 32khz audio if it were single epoch, or ~57.5GB tokenized)
+# Was 15-64k. In theory our goal is 610k +  (~2TB of 32khz audio if it were single epoch, or ~57.5GB tokenized)
 max_steps = (num_epochs * train_loader.total_tokens) // total_batch_size
-warmup_steps = int(max_steps*0.0575)
+warmup_steps = 1800 #int(max_steps*0.01)
 print(f"Max steps: {max_steps}, Warmup steps: {warmup_steps}")
 
 
@@ -180,6 +183,8 @@ def get_clip_value(norms_window, step):
 
 
 best_val_loss = 999.9
+eval_every = 400
+val_loss_steps = 10
 norms_window = []
 loss_window = []
 current_epoch = 0
@@ -195,16 +200,16 @@ os.makedirs(log_dir, exist_ok=True)
 #with open(log_file, "w") as f: # open for writing to clear the file
  #   pass
 
-for step in tqdm(range(max_steps), f"Training..."):
+t = tqdm(range(max_steps), f"Training epoch 1 of {num_epochs}")
+for step in t:
     t0 = time.time()
     last_step = (step == max_steps - 1)
 
     # once in a while evaluate our validation loss
-    if step % 200 == 0 or last_step:
+    if step > 0 and step % eval_every == 0 or last_step:
         model.eval()
         with torch.no_grad():
             val_loss_accum = 0.0
-            val_loss_steps = 50
             for _ in range(val_loss_steps):
                 x1, x2, y, _, _ = val_loader.next_batch()
                 x = torch.cat([x1, x2], dim=1).to(device)
@@ -212,10 +217,10 @@ for step in tqdm(range(max_steps), f"Training..."):
                 if 'cuda' in device:
                     with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                         logits, _ = model(x)
-                        loss = F.cross_entropy(logits[:, -512:].contiguous().view(-1, logits.size(-1)), y.view(-1))
+                        loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
                 else:
                     logits, _ = model(x)
-                    loss = F.cross_entropy(logits[:, -512:].contiguous().view(-1, logits.size(-1)), y.view(-1))
+                    loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
 
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
@@ -230,9 +235,18 @@ for step in tqdm(range(max_steps), f"Training..."):
             }, step=step)
             if last_step or (step > warmup_steps and val_loss_accum.item() < best_val_loss):
                 best_val_loss = min(best_val_loss, val_loss_accum.item())
+                if best_val_loss < 4.75:
+                    val_loss_steps = 70
+                    eval_every = 80
+                elif best_val_loss < 4.825:
+                    val_loss_steps = 50
+                    eval_every = 120
+                else:
+                    val_loss_steps = 10
+                    eval_every = 400
             #if step > 0 and (step % 1600 == 0 or last_step):
                 # optionally write model checkpoints
-                checkpoint_path = os.path.join(log_dir, f"model_s{step:05d}_vl{best_val_loss:.4f}.pt")
+                checkpoint_path = os.path.join(log_dir, f"model_s{step:05d}_vl{val_loss_accum.item():.4f}.pt")
                 print(f"writing checkpoint to {checkpoint_path}")
                 checkpoint = {
                     'model': raw_model.state_dict(),
@@ -264,8 +278,8 @@ for step in tqdm(range(max_steps), f"Training..."):
             #logits_neg, _ = model(x_neg)
 
             # Calculate loss only for the second chunk
-            loss_pos = F.cross_entropy(logits_pos[:, -512:].contiguous().view(-1, logits_pos.size(-1)), y_pos.view(-1))
-            #loss_neg = F.cross_entropy(logits_neg[:, -512:].contiguous().view(-1, logits_neg.size(-1)), y_neg.view(-1))
+            loss_pos = F.cross_entropy(logits_pos[:, -chunk_size:].contiguous().view(-1, logits_pos.size(-1)), y_pos.view(-1))
+            #loss_neg = F.cross_entropy(logits_neg[:, -chunk_size:].contiguous().view(-1, logits_neg.size(-1)), y_neg.view(-1))
 
             # Combine losses
             warmup_factor = 1.0 #min(step / (2.0 * warmup_steps), 1.0)
@@ -316,7 +330,8 @@ for step in tqdm(range(max_steps), f"Training..."):
         prev_epoch = current_epoch
         current_epoch = step * total_batch_size // train_loader.total_tokens
         if prev_epoch != current_epoch:
-            print(f"Epoch {current_epoch}")
+            #print(f"Epoch {current_epoch}")
+            t.set_description(f"Training epoch {current_epoch+1} of {num_epochs}", refresh=True)
         wandb.log({
             "etc/step": step,
             "etc/epoch": current_epoch,

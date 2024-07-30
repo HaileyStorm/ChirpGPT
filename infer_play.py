@@ -16,7 +16,7 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 print(f"using device: {device}")
 model = GPT(GPTConfig())
 
-original_state_dict = torch.load('./log/model_54000.pt', map_location=torch.device('cpu'))
+original_state_dict = torch.load('./log/model_s12900_vl4.7095.pt', map_location=torch.device('cpu'))
 
 # Corrected state dictionary
 state_dict = {
@@ -34,10 +34,11 @@ model.to(device)
 
 seperator = 4097
 
-num_return_sequences = 4
+num_return_sequences = 3
 # 3s @ 32khz = 512 tokens
-# So, 1024, our max sequence length = 6 seconds. We could reduce this by one and append the final separator token manually.
-max_length = 1024
+# 4.5s = 768 tokens
+# We could reduce this by one and append the final separator token manually.
+max_length = 1536
 
 tokens = [seperator]
 tokens = torch.tensor(tokens, dtype=torch.long)
@@ -45,6 +46,8 @@ tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
 xgen = tokens.to(device)
 sample_rng = torch.Generator(device=device)
 sample_rng.manual_seed(1337)
+temperature = 0.95
+top_k = 650
 
 output_tokens = []
 
@@ -56,21 +59,44 @@ with tqdm(total=max_length) as pbar:
     while xgen.size(1) <= max_length:
         # forward the model to get the logits
         with torch.no_grad():
-            logits, loss = model(xgen[:,-model.config.block_size:]) # (B, T, vocab_size)
-            # take the logits at the last position
-            logits = logits[:, -1, :] # (B, vocab_size)
-            # get the probabilities
-            probs = F.softmax(logits, dim=-1)
-            # do top-k sampling of 50 (huggingface pipeline default)
-            # topk_probs here becomes (5, 50), topk_indices is (5, 50)
-            topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
-            # select a token from the top-k probabilities
-            # note: multinomial does not demand the input to sum to 1
-            ix = torch.multinomial(topk_probs, 1, generator=sample_rng) # (B, 1)
-            # gather the corresponding indices
-            xcol = torch.gather(topk_indices, -1, ix) # (B, 1)
-            # append to the sequence
-            xgen = torch.cat((xgen, xcol), dim=1)
+            # Get logits from the model
+            logits, _ = model(xgen[:, -model.config.block_size:])
+            next_token_logits = logits[:, -1, :]
+
+            # Apply temperature
+            next_token_logits = next_token_logits / temperature
+
+            # Handle NaN and Inf values in logits
+            nan_mask = torch.isnan(next_token_logits) | torch.isinf(next_token_logits)
+            if nan_mask.any():
+                # print("Warning: NaN or Inf values detected in logits. Replacing with very negative values.")
+                next_token_logits = torch.where(nan_mask, torch.full_like(next_token_logits, -1e9), next_token_logits)
+
+            # Compute softmax probabilities
+            probs = F.softmax(next_token_logits, dim=-1)
+
+            # Perform top-k sampling
+            top_k_probs, top_k_indices = torch.topk(probs, top_k, dim=-1)
+
+            # Renormalize the top-k probabilities
+            top_k_probs = top_k_probs / top_k_probs.sum(dim=-1, keepdim=True)
+
+            # Check for NaN values in top_k_probs
+            if torch.isnan(top_k_probs).any():
+                # print("Warning: NaN values detected in top-k probabilities. Using uniform distribution.")
+                top_k_probs = torch.ones_like(top_k_probs) / top_k
+
+            # Sample from the top-k distribution
+            try:
+                sample_indices = torch.multinomial(top_k_probs, num_samples=1)
+                next_token = torch.gather(top_k_indices, -1, sample_indices)
+            except RuntimeError as e:
+                print(f"Error during sampling: {e}")
+                print("Falling back to argmax selection from top-k.")
+                next_token = top_k_indices[:, 0].unsqueeze(-1)  # Select the highest probability token
+
+            # Append the new token to the sequence
+            xgen = torch.cat([xgen, next_token], dim=1)
 
             pbar.update(1)  # Update by the number of new tokens added
     # print the generated text

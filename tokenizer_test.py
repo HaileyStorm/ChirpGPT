@@ -24,7 +24,7 @@ if waveform.size(0) > 1:
     waveform = torch.mean(waveform, dim=0, keepdim=True)
 
 # Split the audio into chunks
-chunk_size = 4.5 * 32000
+chunk_size = int(4.5 * 32000)
 chunks = [waveform[:, i:i+chunk_size] for i in range(0, waveform.size(1), chunk_size)]
 
 # Pad the last chunk if necessary

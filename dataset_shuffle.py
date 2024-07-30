@@ -4,9 +4,9 @@ import random
 from tqdm import tqdm
 
 # Constants
-BLOCK_SIZE = 1024
-CRITICAL_DIVISOR = 512
-TARGET_SHARD_BLOCKS = 1230
+BLOCK_SIZE = 1536
+CRITICAL_DIVISOR = 768
+TARGET_SHARD_BLOCKS = 750
 
 
 def load_dataset(data_root, split):
@@ -81,8 +81,8 @@ def shuffle_and_create_new_shards(all_data, output_dir, split):
 
 
 def main():
-    data_root = "./birdset_data_trainOnly"
-    output_root = "./birdset_data_trainOnly_shuffled"
+    data_root = "./birdset_data_trainOnly_widerNet"
+    output_root = "./birdset_data_trainOnly_widerNet_shuffled"
 
     for split in ['train', 'val']:
         print(f"Processing {split} dataset...")

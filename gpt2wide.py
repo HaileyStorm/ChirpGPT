@@ -85,8 +85,8 @@ class GPT(nn.Module):
         self.config = config
 
         self.transformer = nn.ModuleDict(dict(
-            wte=nn.Embedding(config.vocab_size, config.n_embd),
-            wpe=nn.Embedding(config.block_size, config.n_embd),
+            wte=nn.Embedding(config.vocab_size, config.n_embd * 2),
+            wpe=nn.Embedding(config.block_size, config.n_embd * 2),
             h=nn.ModuleList([self._create_block(config, i) for i in range(config.n_layer)]),
             ln_f=nn.LayerNorm(config.n_embd),
         ))
@@ -101,7 +101,7 @@ class GPT(nn.Module):
 
     def _create_block(self, config, layer_index):
         if layer_index == 0:
-            return Block(config, input_width_multiplier=1.0, output_width_multiplier=2.0)
+            return Block(config, input_width_multiplier=2.0, output_width_multiplier=2.0)
         elif layer_index == 1:
             return Block(config, input_width_multiplier=2.0, output_width_multiplier=1.5)
         elif layer_index == 2:

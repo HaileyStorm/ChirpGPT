@@ -12,19 +12,24 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-DATA_DIR = '/media/hailey/More/AI/gpt2audio/birdset_data_noXCL_trainOnly'
-PREFIX = 'birds_notest'
+DATA_DIR = '/media/hailey/More/AI/gpt2audio/birdset_data_trainOnly_widerNet'
+PREFIX = 'birds_wider'
 SHARD_SIZE = 5 * 1024 * 1024  # 5MB in bytes
-CHUNK_LENGTH = 6  # seconds
-SUB_CHUNK_LENGTH = 3  # seconds
+CHUNK_LENGTH = 9  # seconds
+SUB_CHUNK_LENGTH = 4.5  # seconds
+
+LAT_MIN = 27  # 33
+LAT_MAX = 69  # 51
+LONG_MIN = -162  # -125
+LONG_MAX = -52  # -85
 
 # Dataset configuration
 DATASETS = {
+    'HSN': ['train'],  #, 'test'],
+    'POW': ['train'],  #, 'test'],  # 100% will fail original lat/long filter
+    'SSW': ['train'],  #, 'test'],  # 100% will fail original lat/long filter
+    'SNE': ['train'],  #, 'test']
     'XCL': ['train'],
-    'HSN': ['train'], #, 'test'],
-    'POW': ['train', 'test'],  # 100% will fail current lat/long filter
-    'SSW': ['train', 'test'],  # 100% will fail current lat/long filter
-    'SNE': ['train'] #, 'test']
 }
 
 # Initialize tokenizer
@@ -43,8 +48,8 @@ def filter_example(example, is_train_split):
         length = CHUNK_LENGTH
 
     base_condition = (
-            33 <= latitude <= 51 and
-            -125 <= longitude <= -85 and
+            LAT_MIN <= latitude <= LAT_MAX and
+            LONG_MIN <= longitude <= LONG_MAX and
             length >= CHUNK_LENGTH
     )
 
@@ -62,7 +67,7 @@ def chunk_audio(waveform, sample_rate, is_train_split, detected_events=None, sta
     if not is_train_split:
         # For test splits, create a single CHUNK_LENGTH-second chunk centered around the vocalization
         center = (start_time + end_time) / 2
-        chunk_start = max(0, center - SUB_CHUNK_LENGTH)
+        chunk_start = max(0, center - (CHUNK_LENGTH / 2))
         chunk_end = min(waveform.shape[1] / sample_rate, chunk_start + CHUNK_LENGTH)
         chunk_start = max(0, chunk_end - CHUNK_LENGTH)  # Ensure full CHUNK_LENGTH
         chunk = waveform[:, int(chunk_start * sample_rate):int(chunk_end * sample_rate)]
@@ -250,5 +255,5 @@ def main(resume_index=0, datasets_to_use=DATASETS):
 
 if __name__ == "__main__":
     # Example: Exclude XCL, POW, and SSW
-    datasets_to_use = {k: v for k, v in DATASETS.items() if k not in ['POW', 'SSW', 'XCL']}
+    datasets_to_use = {k: v for k, v in DATASETS.items()}  #if k not in ['POW', 'SSW', 'XCL']}
     main(resume_index=0, datasets_to_use=datasets_to_use)

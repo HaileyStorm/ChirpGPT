@@ -6,7 +6,7 @@ import random
 
 class DataLoaderLite:
     def __init__(self, B, T, process_rank, num_processes, split,
-                 ddp=False, master_process=False, seed=None, critical_divisor=512):
+                 ddp=False, master_process=False, seed=None, critical_divisor=768):
         self.B = B
         self.T = T
         self.process_rank = process_rank
@@ -19,7 +19,7 @@ class DataLoaderLite:
             random.seed(seed)
             np.random.seed(seed)
 
-        data_root = "./birdset_data_trainOnly_shuffled"
+        data_root = "./birdset_data_trainOnly_widerNet_shuffled"
         shards = os.listdir(data_root)
         shards = [s for s in shards if split in s]
         shards = sorted(shards)
