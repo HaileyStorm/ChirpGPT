@@ -11,3 +11,4 @@ data_*/*
 venv
 *.wav
 wandb
+/music_data/
