@@ -94,21 +94,24 @@ class DataLoaderLite:
         # Select the blocks for this process
         process_blocks = batch_blocks[self.process_rank::self.num_processes]
 
-        x1 = torch.stack([self.get_block(i)[:self.critical_divisor] for i in process_blocks])
-        x2 = torch.stack([self.get_block(i)[self.critical_divisor:] for i in process_blocks])
+        #x1 = torch.stack([self.get_block(i)[:self.critical_divisor] for i in process_blocks])
+        #x2 = torch.stack([self.get_block(i)[self.critical_divisor:] for i in process_blocks])
 
-        y_pos = torch.stack([self.get_block(i)[self.critical_divisor+1:] for i in process_blocks])
-        separator_token = torch.full((y_pos.size(0), 1), 4097, dtype=y_pos.dtype, device=y_pos.device)
-        y_pos = torch.cat([y_pos, separator_token], dim=1)
+        #y_pos = torch.stack([self.get_block(i)[self.critical_divisor+1:] for i in process_blocks])
+        #separator_token = torch.full((y_pos.size(0), 1), 4097, dtype=y_pos.dtype, device=y_pos.device)
+        #y_pos = torch.cat([y_pos, separator_token], dim=1)
 
-        r = np.random.randint(0, self.num_T_blocks)
-        x2_neg = torch.stack([self.get_block(r)[self.critical_divisor:] for _ in process_blocks])
-        y_neg = torch.stack([self.get_block(r)[self.critical_divisor + 1:] for _ in process_blocks])
-        separator_token = torch.full((y_neg.size(0), 1), 4097, dtype=y_neg.dtype, device=y_neg.device)
-        y_neg = torch.cat([y_neg, separator_token], dim=1)
+        #r = np.random.randint(0, self.num_T_blocks)
+        #x2_neg = torch.stack([self.get_block(r)[self.critical_divisor:] for _ in process_blocks])
+        #y_neg = torch.stack([self.get_block(r)[self.critical_divisor + 1:] for _ in process_blocks])
+        #separator_token = torch.full((y_neg.size(0), 1), 4097, dtype=y_neg.dtype, device=y_neg.device)
+        #y_neg = torch.cat([y_neg, separator_token], dim=1)
 
-        self.current_batch += 1
-        return x1, x2, y_pos, x2_neg, y_neg
+        #self.current_batch += 1
+        #return x1, x2, y_pos, x2_neg, y_neg
+
+        x = torch.stack([self.get_block(i) for i in process_blocks])
+        return x
 
     def __len__(self):
         total_critical_blocks = sum(len(self.load_tokens(shard)) // self.critical_divisor for shard in self.shards)

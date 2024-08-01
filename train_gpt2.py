@@ -211,16 +211,18 @@ for step in t:
         with torch.no_grad():
             val_loss_accum = 0.0
             for _ in range(val_loss_steps):
-                x1, x2, y, _, _ = val_loader.next_batch()
-                x = torch.cat([x1, x2], dim=1).to(device)
-                y = y.to(device)
+                #x1, x2, y, _, _ = val_loader.next_batch()
+                #x = torch.cat([x1, x2], dim=1).to(device)
+                x = val_loader.next_batch()
+                x = x.to(device)
+                #y = y.to(device)
                 if 'cuda' in device:
                     with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                        logits, _ = model(x)
-                        loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
+                        logits, loss = model(x)
+                        #loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
                 else:
-                    logits, _ = model(x)
-                    loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
+                    logits, loss = model(x)
+                    #loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
 
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
@@ -266,19 +268,21 @@ for step in t:
     loss_accum_combined = 0.0
 
     for micro_step in range(grad_accum_steps):
-        x1_pos, x2_pos, y_pos, x2_neg, y_neg = train_loader.next_batch()
+        #x1_pos, x2_pos, y_pos, x2_neg, y_neg = train_loader.next_batch()
 
-        x_pos = torch.cat([x1_pos, x2_pos], dim=1).to(device)
-        y_pos = y_pos.to(device)
+        #x_pos = torch.cat([x1_pos, x2_pos], dim=1).to(device)
+        x_pos = train_loader.next_batch()
+        x_pos = x_pos.to(device)
+        #y_pos = y_pos.to(device)
         #x_neg = torch.cat([x1_pos, x2_neg], dim=1).to(device)
         #y_neg = y_neg.to(device)
 
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-            logits_pos, _ = model(x_pos)
+            logits_pos, loss_pos = model(x_pos)
             #logits_neg, _ = model(x_neg)
 
             # Calculate loss only for the second chunk
-            loss_pos = F.cross_entropy(logits_pos[:, -chunk_size:].contiguous().view(-1, logits_pos.size(-1)), y_pos.view(-1))
+            #loss_pos = F.cross_entropy(logits_pos[:, -chunk_size:].contiguous().view(-1, logits_pos.size(-1)), y_pos.view(-1))
             #loss_neg = F.cross_entropy(logits_neg[:, -chunk_size:].contiguous().view(-1, logits_neg.size(-1)), y_neg.view(-1))
 
             # Combine losses
