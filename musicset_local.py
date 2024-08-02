@@ -18,7 +18,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 tokenizer = SpeechTokenizer(device=device)
 
 
-def process_audio(waveform, sample_rate):
+def process_audio(waveform, sample_rate, pad_end=False):
     # Resample if necessary
     if sample_rate != tokenizer.sample_rate:
         resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=tokenizer.sample_rate)
@@ -28,20 +28,40 @@ def process_audio(waveform, sample_rate):
     if waveform.shape[0] > 1:
         waveform = torch.mean(waveform, dim=0, keepdim=True)
 
-    # Create overlapping chunks
-    audio_length = waveform.shape[1] / tokenizer.sample_rate
+    # Calculate chunk sizes in samples
+    samples_per_chunk = int(CHUNK_LENGTH * tokenizer.sample_rate)
+    samples_per_subchunk = int(SUB_CHUNK_LENGTH * tokenizer.sample_rate)
+    audio_length = waveform.shape[1]
+
+    # Optional padding
+    if pad_end:
+        remainder = audio_length % samples_per_chunk
+        if remainder != 0:
+            pad_size = samples_per_chunk - remainder
+            waveform = torch.nn.functional.pad(waveform, (0, pad_size))
+            audio_length = waveform.shape[1]
+
     tokenized_chunks = []
 
-    for start_time in np.arange(0, audio_length - CHUNK_LENGTH + 1, 1):
-        end_time = start_time + CHUNK_LENGTH
-        chunk = waveform[:, int(start_time * tokenizer.sample_rate):int(end_time * tokenizer.sample_rate)]
+    for start_time in range(0, audio_length - samples_per_chunk + 1, tokenizer.sample_rate):
+        end_time = start_time + samples_per_chunk
+        chunk = waveform[:, start_time:end_time]
 
         # Split into two SUB_CHUNK_LENGTH segments
-        sub_chunks = torch.split(chunk, int(SUB_CHUNK_LENGTH * tokenizer.sample_rate), dim=1)
+        sub_chunks = torch.split(chunk, samples_per_subchunk, dim=1)
 
-        for sub_chunk in sub_chunks:
-            tokenized_sub_chunk = tokenizer.encode([sub_chunk])
-            tokenized_chunks.append(tokenized_sub_chunk[0][:-1])  # Remove the last token as in the original script
+        if len(sub_chunks) == 2 and all(sc.shape[1] == samples_per_subchunk for sc in sub_chunks):
+            valid_pair = True
+            pair = []
+            for sub_chunk in sub_chunks:
+                tokenized_sub_chunk = tokenizer.encode([sub_chunk])
+                if tokenized_sub_chunk[0][:-1].size != 768:
+                    valid_pair = False
+                    break
+                pair.append(tokenized_sub_chunk[0][:-1])
+
+            if valid_pair:
+                tokenized_chunks.extend(pair)
 
     return tokenized_chunks
 
@@ -78,7 +98,7 @@ def main():
         if waveform.shape[1] / sample_rate < CHUNK_LENGTH:
             continue
 
-        tokenized_chunks = process_audio(waveform, sample_rate)
+        tokenized_chunks = process_audio(waveform, sample_rate, pad_end=False)
 
         for chunk in tokenized_chunks:
             if np.random.random() < 0.01:  # 1% chance for validation

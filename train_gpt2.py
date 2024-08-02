@@ -107,7 +107,7 @@ GROK_ALPHA = 0.925 #0.96
 GROK_LAMB = 1.1  #0.991
 weight_decay = 0.113333
 
-max_lr = 3.5e-4  #3.9e-4
+max_lr = 3.6667e-4  #3.9e-4
 init_lr_pct = 0.06667
 min_lr_pct = 0.01 #0.17
 neg_loss_weight = 0.6667
@@ -120,9 +120,9 @@ norms_window_size = 350
 # Decrease lr when norm percentile & loss are increasing
 max_clip_slope = 1.1
 lr_adj_rate = 0.925  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps while conditions met
-# Was 15-64k. In theory our goal is 610k +  (~2TB of 32khz audio if it were single epoch, or ~57.5GB tokenized)
+# Was 15-64k. In theory our goal is 610k +  (~2TB of 32khz audio if it were single epoch, or ~57.5GB tokenized [total, obviously some # epochs > 1 is fine, at least 6 & probably more w/ more data])
 max_steps = (num_epochs * train_loader.total_tokens) // total_batch_size
-warmup_steps = 1800 #int(max_steps*0.01)
+warmup_steps = 2200 #int(max_steps*0.01)
 print(f"Max steps: {max_steps}, Warmup steps: {warmup_steps}")
 
 
@@ -213,15 +213,15 @@ for step in t:
             for _ in range(val_loss_steps):
                 #x1, x2, y, _, _ = val_loader.next_batch()
                 #x = torch.cat([x1, x2], dim=1).to(device)
-                x = val_loader.next_batch()
+                x, y = val_loader.next_batch()
                 x = x.to(device)
-                #y = y.to(device)
+                y = y.to(device)
                 if 'cuda' in device:
                     with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                        logits, loss = model(x)
+                        logits, loss = model(x, y)
                         #loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
                 else:
-                    logits, loss = model(x)
+                    logits, loss = model(x, y)
                     #loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
 
                 loss = loss / val_loss_steps
@@ -271,14 +271,14 @@ for step in t:
         #x1_pos, x2_pos, y_pos, x2_neg, y_neg = train_loader.next_batch()
 
         #x_pos = torch.cat([x1_pos, x2_pos], dim=1).to(device)
-        x_pos = train_loader.next_batch()
+        x_pos, y_pos = train_loader.next_batch()
         x_pos = x_pos.to(device)
-        #y_pos = y_pos.to(device)
+        y_pos = y_pos.to(device)
         #x_neg = torch.cat([x1_pos, x2_neg], dim=1).to(device)
         #y_neg = y_neg.to(device)
 
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-            logits_pos, loss_pos = model(x_pos)
+            logits_pos, loss_pos = model(x_pos, y_pos)
             #logits_neg, _ = model(x_neg)
 
             # Calculate loss only for the second chunk

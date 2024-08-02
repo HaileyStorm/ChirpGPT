@@ -19,7 +19,7 @@ class DataLoaderLite:
             random.seed(seed)
             np.random.seed(seed)
 
-        data_root = "./birdset_data_trainOnly_widerNet_shuffled"
+        data_root = "./music_data_shuffled"
         shards = os.listdir(data_root)
         shards = [s for s in shards if split in s]
         shards = sorted(shards)
@@ -110,8 +110,9 @@ class DataLoaderLite:
         #self.current_batch += 1
         #return x1, x2, y_pos, x2_neg, y_neg
 
-        x = torch.stack([self.get_block(i) for i in process_blocks])
-        return x
+        x = torch.stack([self.get_block(i)[:-1] for i in process_blocks])
+        y = torch.stack([self.get_block(i)[1:] for i in process_blocks])
+        return x, y
 
     def __len__(self):
         total_critical_blocks = sum(len(self.load_tokens(shard)) // self.critical_divisor for shard in self.shards)

@@ -81,8 +81,8 @@ def shuffle_and_create_new_shards(all_data, output_dir, split):
 
 
 def main():
-    data_root = "./birdset_data_trainOnly_widerNet"
-    output_root = "./birdset_data_trainOnly_widerNet_shuffled"
+    data_root = "./repaired_music_data"
+    output_root = "./music_data_shuffled"
 
     for split in ['train', 'val']:
         print(f"Processing {split} dataset...")
