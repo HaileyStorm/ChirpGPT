@@ -110,8 +110,11 @@ class DataLoaderLite:
         #self.current_batch += 1
         #return x1, x2, y_pos, x2_neg, y_neg
 
-        x = torch.stack([self.get_block(i)[:-1] for i in process_blocks])
+        x = torch.stack([self.get_block(i) for i in process_blocks])
         y = torch.stack([self.get_block(i)[1:] for i in process_blocks])
+        separator_token = torch.full((y.size(0), 1), 4097, dtype=y.dtype, device=y.device)
+        y = torch.cat([y, separator_token], dim=1)
+        self.current_batch += 1
         return x, y
 
     def __len__(self):
