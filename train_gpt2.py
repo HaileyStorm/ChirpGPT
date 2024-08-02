@@ -56,15 +56,45 @@ if torch.cuda.is_available():
 if master_process:
     wandb.init(project="ChirpGPT")
 
+# ------------------------------
+# HYPER-PARAMETERS
+# ------------------------------
+
 # sequence length
 T = 1536
 total_batch_size = T*48  # pick something about 32768
 # micro batch size
 B = 24
 
+grok_alpha = 0.925 #0.96
+grok_lamb = 1.1  #0.991
+weight_decay = 0.113333
+
+max_lr = 3.6667e-4  #3.9e-4
+init_lr_pct = 0.06667
+min_lr_pct = 0.01 #0.17
+
+loss_by_second_subchunk = False
+
+num_epochs = 6 #25 #13  # At 170MB tokenized data, val starts increasing ~epoch 5-6
+grad_clip_percentile = 0.0875
+grad_clip_min = 1e-3
+grad_clip_max = 0.85
+norms_window_size = 350
+# Decrease lr when norm percentile & loss are increasing
+max_clip_slope = 1.1
+lr_adj_rate = 0.925  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps while conditions met
+warmup_steps = 2200 #int(max_steps*0.01)
+
+resume = False
+resume_from = './BIRD_FINAL_32khz_Small_NoTest_model_64432.pt'
+
+# ------------------------------
+# END HYPER-PARAMETERS
+# ------------------------------
+
 chunk_size = T // 2
 print(f"Chunk size: {chunk_size}")
-
 
 assert total_batch_size % (B * T * ddp_world_size) == 0, "make sure total_batch_size is divisible by B * T * ddp_world_size"
 grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
@@ -75,25 +105,28 @@ if master_process:
 train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train", ddp=ddp, master_process=master_process, critical_divisor=chunk_size)
 val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val", ddp=ddp, master_process=master_process, critical_divisor=chunk_size)
 
+# Was 15-64k. In theory our goal is 610k +  (~2TB of 32khz audio if it were single epoch, or ~57.5GB tokenized [total, obviously some # epochs > 1 is fine, at least 6 & probably more w/ more data])
+max_steps = (num_epochs * train_loader.total_tokens) // total_batch_size
+print(f"Max steps: {max_steps}, Warmup steps: {warmup_steps}")
+
 torch.set_float32_matmul_precision('high')
 
 # create model
 model = GPT(GPTConfig(block_size=T), init_weights=True)
 grads = None
 
-original_state_dict = torch.load('./BIRD_FINAL_32khz_Small_NoTest_model_64432.pt', map_location=torch.device('cpu'))
-
-# Corrected state dictionary
-state_dict = {
-    'model': OrderedDict([
-        (key.replace('_orig_mod.', ''), value) for key, value in original_state_dict['model'].items()
-    ]),
-    'config': original_state_dict['config'],
-    'step': original_state_dict['step'],
-    'val_loss': original_state_dict['val_loss']
-}
-
-#model.load_state_dict(state_dict['model'])
+if resume:
+    original_state_dict = torch.load(resume_from, map_location=torch.device('cpu'))
+    # Corrected state dictionary
+    state_dict = {
+        'model': OrderedDict([
+            (key.replace('_orig_mod.', ''), value) for key, value in original_state_dict['model'].items()
+        ]),
+        'config': original_state_dict['config'],
+        'step': original_state_dict['step'],
+        'val_loss': original_state_dict['val_loss']
+    }
+    model.load_state_dict(state_dict['model'])
 
 model.to(device)
 use_compile = True
@@ -102,28 +135,6 @@ if use_compile:
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model # always contains the "raw" unwrapped model
-
-GROK_ALPHA = 0.925 #0.96
-GROK_LAMB = 1.1  #0.991
-weight_decay = 0.113333
-
-max_lr = 3.6667e-4  #3.9e-4
-init_lr_pct = 0.06667
-min_lr_pct = 0.01 #0.17
-neg_loss_weight = 0.6667
-
-num_epochs = 6 #25 #13  # At 170MB tokenized data, val starts increasing ~epoch 5-6
-grad_clip_percentile = 0.0875
-grad_clip_min = 1e-3
-grad_clip_max = 0.85
-norms_window_size = 350
-# Decrease lr when norm percentile & loss are increasing
-max_clip_slope = 1.1
-lr_adj_rate = 0.925  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps while conditions met
-# Was 15-64k. In theory our goal is 610k +  (~2TB of 32khz audio if it were single epoch, or ~57.5GB tokenized [total, obviously some # epochs > 1 is fine, at least 6 & probably more w/ more data])
-max_steps = (num_epochs * train_loader.total_tokens) // total_batch_size
-warmup_steps = 2200 #int(max_steps*0.01)
-print(f"Max steps: {max_steps}, Warmup steps: {warmup_steps}")
 
 
 def get_lr(it):
@@ -211,18 +222,27 @@ for step in t:
         with torch.no_grad():
             val_loss_accum = 0.0
             for _ in range(val_loss_steps):
-                x, y = val_loader.next_batch()
-
+                x, y = val_loader.next_batch(loss_by_second_subchunk)
                 x = x.to(device)
                 y = y.to(device)
+
                 if 'cuda' in device:
                     with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                        # loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
-                        logits, loss = model(x, y)
-
+                        # Calculate loss only for the second chunk
+                        if loss_by_second_subchunk:
+                            logits, _ = model(x)
+                            loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
+                        # Calculate loss only for the full sequence
+                        else:
+                            _, loss = model(x, y)
                 else:
-                    # loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
-                    logits, loss = model(x, y)
+                    # Calculate loss only for the second chunk
+                    if loss_by_second_subchunk:
+                        logits, _ = model(x)
+                        loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
+                    # Calculate loss only for the full sequence
+                    else:
+                        _, loss = model(x, y)
 
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
@@ -266,14 +286,18 @@ for step in t:
     loss_accum = 0.0
 
     for micro_step in range(grad_accum_steps):
-        x, y = train_loader.next_batch()
+        x, y = train_loader.next_batch(loss_by_second_subchunk)
         x = x.to(device)
         y = y.to(device)
 
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
             # Calculate loss only for the second chunk
-            # loss = F.cross_entropy(logits_pos[:, -chunk_size:].contiguous().view(-1, logits_pos.size(-1)), y_pos.view(-1))
-            logits_pos, loss = model(x, y)
+            if loss_by_second_subchunk:
+                logits, _ = model(x)
+                loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
+            # Calculate loss only for the full sequence
+            else:
+                _, loss = model(x, y)
 
         loss_accum += loss.detach() / grad_accum_steps
         loss = loss / grad_accum_steps
@@ -283,8 +307,8 @@ for step in t:
         loss.backward()
 
         if step >= (warmup_steps * 0.6667):
-            grads = gradfilter_ema(model, grads=grads, alpha=GROK_ALPHA,
-                                   lamb=GROK_LAMB * (min(1.0, step / (warmup_steps * 1.5)) ** 3))
+            grads = gradfilter_ema(model, grads=grads, alpha=grok_alpha,
+                                   lamb=grok_lamb * (min(1.0, step / (warmup_steps * 1.5)) ** 3))
 
     if ddp:
         dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)

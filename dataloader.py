@@ -79,7 +79,7 @@ class DataLoaderLite:
         end = start + self.T
         return self.tokens[start:end]
 
-    def next_batch(self):
+    def next_batch(self, loss_by_second_subchunk):
         if self.current_batch >= self.num_batches:
             self.current_shard = (self.current_shard + 1) % len(self.shards)
             self.load_and_shuffle_shard()
@@ -94,31 +94,26 @@ class DataLoaderLite:
         # Select the blocks for this process
         process_blocks = batch_blocks[self.process_rank::self.num_processes]
 
-        # ---
         # Predict second subchunk mode. Make sure to calculate loss using only the second subchunk (don't use model loss).
-        # ---
-        #x1 = torch.stack([self.get_block(i)[:self.critical_divisor] for i in process_blocks])
-        #x2 = torch.stack([self.get_block(i)[self.critical_divisor:] for i in process_blocks])
-        #x = torch.cat([x1, x2], dim=1)
+        if loss_by_second_subchunk:
+            x1 = torch.stack([self.get_block(i)[:self.critical_divisor] for i in process_blocks])
+            x2 = torch.stack([self.get_block(i)[self.critical_divisor:] for i in process_blocks])
+            x = torch.cat([x1, x2], dim=1)
 
-        #y = torch.stack([self.get_block(i)[self.critical_divisor+1:] for i in process_blocks])
-        #separator_token = torch.full((y_pos.size(0), 1), 4097, dtype=y_pos.dtype, device=y_pos.device)
-        #y = torch.cat([y_pos, separator_token], dim=1)
+            y = torch.stack([self.get_block(i)[self.critical_divisor+1:] for i in process_blocks])
+            separator_token = torch.full((y.size(0), 1), 4097, dtype=y.dtype, device=y.device)
+            y = torch.cat([y, separator_token], dim=1)
 
-        #self.current_batch += 1
-        #return x, y
-        # ---
-
-        # ---
+            self.current_batch += 1
+            return x, y
         # Predict full sequence mode. Can use model loss.
-        # ---
-        x = torch.stack([self.get_block(i) for i in process_blocks])
-        y = torch.stack([self.get_block(i)[1:] for i in process_blocks])
-        separator_token = torch.full((y.size(0), 1), 4097, dtype=y.dtype, device=y.device)
-        y = torch.cat([y, separator_token], dim=1)
-        self.current_batch += 1
-        return x, y
-        # ---
+        else:
+            x = torch.stack([self.get_block(i) for i in process_blocks])
+            y = torch.stack([self.get_block(i)[1:] for i in process_blocks])
+            separator_token = torch.full((y.size(0), 1), 4097, dtype=y.dtype, device=y.device)
+            y = torch.cat([y, separator_token], dim=1)
+            self.current_batch += 1
+            return x, y
 
     def __len__(self):
         total_critical_blocks = sum(len(self.load_tokens(shard)) // self.critical_divisor for shard in self.shards)
