@@ -94,28 +94,31 @@ class DataLoaderLite:
         # Select the blocks for this process
         process_blocks = batch_blocks[self.process_rank::self.num_processes]
 
+        # ---
+        # Predict second subchunk mode. Make sure to calculate loss using only the second subchunk (don't use model loss).
+        # ---
         #x1 = torch.stack([self.get_block(i)[:self.critical_divisor] for i in process_blocks])
         #x2 = torch.stack([self.get_block(i)[self.critical_divisor:] for i in process_blocks])
+        #x = torch.cat([x1, x2], dim=1)
 
-        #y_pos = torch.stack([self.get_block(i)[self.critical_divisor+1:] for i in process_blocks])
+        #y = torch.stack([self.get_block(i)[self.critical_divisor+1:] for i in process_blocks])
         #separator_token = torch.full((y_pos.size(0), 1), 4097, dtype=y_pos.dtype, device=y_pos.device)
-        #y_pos = torch.cat([y_pos, separator_token], dim=1)
-
-        #r = np.random.randint(0, self.num_T_blocks)
-        #x2_neg = torch.stack([self.get_block(r)[self.critical_divisor:] for _ in process_blocks])
-        #y_neg = torch.stack([self.get_block(r)[self.critical_divisor + 1:] for _ in process_blocks])
-        #separator_token = torch.full((y_neg.size(0), 1), 4097, dtype=y_neg.dtype, device=y_neg.device)
-        #y_neg = torch.cat([y_neg, separator_token], dim=1)
+        #y = torch.cat([y_pos, separator_token], dim=1)
 
         #self.current_batch += 1
-        #return x1, x2, y_pos, x2_neg, y_neg
+        #return x, y
+        # ---
 
+        # ---
+        # Predict full sequence mode. Can use model loss.
+        # ---
         x = torch.stack([self.get_block(i) for i in process_blocks])
         y = torch.stack([self.get_block(i)[1:] for i in process_blocks])
         separator_token = torch.full((y.size(0), 1), 4097, dtype=y.dtype, device=y.device)
         y = torch.cat([y, separator_token], dim=1)
         self.current_batch += 1
         return x, y
+        # ---
 
     def __len__(self):
         total_critical_blocks = sum(len(self.load_tokens(shard)) // self.critical_divisor for shard in self.shards)

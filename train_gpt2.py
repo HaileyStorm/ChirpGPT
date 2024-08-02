@@ -211,18 +211,18 @@ for step in t:
         with torch.no_grad():
             val_loss_accum = 0.0
             for _ in range(val_loss_steps):
-                #x1, x2, y, _, _ = val_loader.next_batch()
-                #x = torch.cat([x1, x2], dim=1).to(device)
                 x, y = val_loader.next_batch()
+
                 x = x.to(device)
                 y = y.to(device)
                 if 'cuda' in device:
                     with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                        # loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
                         logits, loss = model(x, y)
-                        #loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
+
                 else:
+                    # loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
                     logits, loss = model(x, y)
-                    #loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
 
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
@@ -263,39 +263,19 @@ for step in t:
     # do one step of the optimization
     model.train()
     optimizer.zero_grad()
-    loss_accum_pos = 0.0
-    loss_accum_neg = 0.0
-    loss_accum_combined = 0.0
+    loss_accum = 0.0
 
     for micro_step in range(grad_accum_steps):
-        #x1_pos, x2_pos, y_pos, x2_neg, y_neg = train_loader.next_batch()
-
-        #x_pos = torch.cat([x1_pos, x2_pos], dim=1).to(device)
-        x_pos, y_pos = train_loader.next_batch()
-        x_pos = x_pos.to(device)
-        y_pos = y_pos.to(device)
-        #x_neg = torch.cat([x1_pos, x2_neg], dim=1).to(device)
-        #y_neg = y_neg.to(device)
+        x, y = train_loader.next_batch()
+        x = x.to(device)
+        y = y.to(device)
 
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-            logits_pos, loss_pos = model(x_pos, y_pos)
-            #logits_neg, _ = model(x_neg)
-
             # Calculate loss only for the second chunk
-            #loss_pos = F.cross_entropy(logits_pos[:, -chunk_size:].contiguous().view(-1, logits_pos.size(-1)), y_pos.view(-1))
-            #loss_neg = F.cross_entropy(logits_neg[:, -chunk_size:].contiguous().view(-1, logits_neg.size(-1)), y_neg.view(-1))
+            # loss = F.cross_entropy(logits_pos[:, -chunk_size:].contiguous().view(-1, logits_pos.size(-1)), y_pos.view(-1))
+            logits_pos, loss = model(x, y)
 
-            # Combine losses
-            warmup_factor = 1.0 #min(step / (2.0 * warmup_steps), 1.0)
-            # Clamp loss_neg so the division doesn't get nasty
-            #clamped_loss_neg = torch.clamp(loss_neg, min=0.6667 * loss_pos, max=1.5 * loss_pos)
-            # Gradually introduce the negative loss
-            #loss = loss_pos / (1.0 + warmup_factor * (clamped_loss_neg - 1.0) * neg_loss_weight + 1e-8)
-            loss = loss_pos #+ ((loss_pos / clamped_loss_neg) * warmup_factor * neg_loss_weight)
-
-        loss_accum_pos += loss_pos.detach() / grad_accum_steps
-        #loss_accum_neg += loss_neg.detach() / grad_accum_steps
-        loss_accum_combined += loss.detach() / grad_accum_steps
+        loss_accum += loss.detach() / grad_accum_steps
         loss = loss / grad_accum_steps
 
         if ddp:
@@ -307,13 +287,12 @@ for step in t:
                                    lamb=GROK_LAMB * (min(1.0, step / (warmup_steps * 1.5)) ** 3))
 
     if ddp:
-        dist.all_reduce(loss_accum_pos, op=dist.ReduceOp.AVG)
-        #dist.all_reduce(loss_accum_neg, op=dist.ReduceOp.AVG)
-        dist.all_reduce(loss_accum_combined, op=dist.ReduceOp.AVG)
+        dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
+
     clip_val = get_clip_value(norms_window, step)
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), clip_val)
     norms_window.append(norm.item())
-    loss_window.append(loss_accum_combined.item())
+    loss_window.append(loss_accum.item())
     if len(norms_window) > norms_window_size:
         norms_window.pop(0)
         loss_window.pop(0)
@@ -343,9 +322,7 @@ for step in t:
             "etc/norm": norm.item(),
             "etc/clip_value": clip_val,
             "etc/toks_per_sec": tokens_per_sec,
-            "train/loss_combined": loss_accum_combined.item(),
-            "train/loss_pos": loss_accum_pos.item(),
-           # "train/loss_neg": loss_accum_neg.item(),
+            "train/loss": loss_accum.item(),
         }, step=step)
 
 if ddp:
