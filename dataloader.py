@@ -6,7 +6,7 @@ import random
 
 class DataLoaderLite:
     def __init__(self, B, T, process_rank, num_processes, split,
-                 ddp=False, master_process=False, seed=None, critical_divisor=768):
+                 ddp=False, master_process=False, seed=None, critical_divisor=1024):
         self.B = B
         self.T = T
         self.process_rank = process_rank
@@ -79,7 +79,7 @@ class DataLoaderLite:
         end = start + self.T
         return self.tokens[start:end]
 
-    def next_batch(self, loss_by_second_subchunk):
+    def next_batch(self, loss_by_later_subchunks):
         if self.current_batch >= self.num_batches:
             self.current_shard = (self.current_shard + 1) % len(self.shards)
             self.load_and_shuffle_shard()
@@ -94,19 +94,17 @@ class DataLoaderLite:
         # Select the blocks for this process
         process_blocks = batch_blocks[self.process_rank::self.num_processes]
 
-        # Predict second subchunk mode. Make sure to calculate loss using only the second subchunk (don't use model loss).
-        if loss_by_second_subchunk:
-            x1 = torch.stack([self.get_block(i)[:self.critical_divisor] for i in process_blocks])
-            x2 = torch.stack([self.get_block(i)[self.critical_divisor:] for i in process_blocks])
-            x = torch.cat([x1, x2], dim=1)
-
-            y = torch.stack([self.get_block(i)[self.critical_divisor+1:] for i in process_blocks])
+        # Return full sequence & next-token offset full sequence, or full sequence & offset broken-down 2nd&3rd subchunks
+        if loss_by_later_subchunks:
+            x = torch.stack([self.get_block(i) for i in process_blocks])
+            y = torch.stack(
+                [self.get_block(i)[self.critical_divisor+1:2 * self.critical_divisor] for i in process_blocks])
             separator_token = torch.full((y.size(0), 1), 4097, dtype=y.dtype, device=y.device)
             y = torch.cat([y, separator_token], dim=1)
-
+            z = torch.stack([self.get_block(i)[2 * self.critical_divisor+1:] for i in process_blocks])
+            z = torch.cat([z, separator_token], dim=1)
             self.current_batch += 1
-            return x, y
-        # Predict full sequence mode. Can use model loss.
+            return x, y, z
         else:
             x = torch.stack([self.get_block(i) for i in process_blocks])
             y = torch.stack([self.get_block(i)[1:] for i in process_blocks])

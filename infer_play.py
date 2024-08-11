@@ -16,7 +16,7 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 print(f"using device: {device}")
 model = GPT(GPTConfig())
 
-original_state_dict = torch.load('./log/model_s12900_vl4.7095.pt', map_location=torch.device('cpu'))
+original_state_dict = torch.load('./log/model_s71600_vl5.1429.pt', map_location=torch.device('cpu'))
 
 # Corrected state dictionary
 state_dict = {
@@ -37,8 +37,9 @@ seperator = 4097
 num_return_sequences = 3
 # 3s @ 32khz = 512 tokens
 # 4.5s = 768 tokens
+# 6s = 1024
 # We could reduce this by one and append the final separator token manually.
-max_length = 1536
+max_length = 3072  # 1536
 
 tokens = [seperator]
 tokens = torch.tensor(tokens, dtype=torch.long)
@@ -110,7 +111,7 @@ with torch.no_grad():
 tokenizer = SpeechTokenizer(device=device)
 
 
-def find_last_instance_of_seperator(lst, element=4097):
+def find_last_instance_of_seperator(lst, element=seperator):
     reversed_list = lst[::-1]
     try:
         reversed_index = reversed_list.index(element)

@@ -13,6 +13,7 @@ import numpy as np
 from tqdm import tqdm
 from collections import OrderedDict
 from torch.nn import functional as F
+import random
 
 # simple launch:
 # python train_gpt2.py
@@ -61,7 +62,7 @@ if master_process:
 # ------------------------------
 
 # sequence length
-T = 1536
+T = 3072
 total_batch_size = T*48  # pick something about 32768
 # micro batch size
 B = 24
@@ -70,13 +71,18 @@ grok_alpha = 0.925 #0.96
 grok_lamb = 1.1  #0.991
 weight_decay = 0.113333
 
-max_lr = 3.6667e-4  #3.9e-4
-init_lr_pct = 0.06667
-min_lr_pct = 0.01 #0.17
+max_lr = 3.15e-4 #3.6667e-4  #3.9e-4
+init_lr_pct = 0.075 #0.06667
+min_lr_pct = 0.1 #0.01
 
-loss_by_second_subchunk = False
+loss_by_later_subchunks = False
+# When loss_by_later_subchunks = True, warmup to:
+third_subchunk_predict_percentage = 0.75
+# After warmup, 2nd+third subchunk percentage = 1 - third (during warmup full sequence likelihood decreases from 1 to 0)
 
-num_epochs = 6 #25 #13  # At 170MB tokenized data, val starts increasing ~epoch 5-6
+# At 170MB tokenized data & next-chunk loss, val starts increasing ~epoch 5-6. With music at least seems start earlier for full sequence loss.
+# Maybe try 3-4 epochs full-sequence then ~2-4(?) next-chunk(s)
+num_epochs = 6
 grad_clip_percentile = 0.0875
 grad_clip_min = 1e-3
 grad_clip_max = 0.85
@@ -93,7 +99,7 @@ resume_from = './BIRD_FINAL_32khz_Small_NoTest_model_64432.pt'
 # END HYPER-PARAMETERS
 # ------------------------------
 
-chunk_size = T // 2
+chunk_size = T // 3
 print(f"Chunk size: {chunk_size}")
 
 assert total_batch_size % (B * T * ddp_world_size) == 0, "make sure total_batch_size is divisible by B * T * ddp_world_size"
@@ -193,6 +199,18 @@ def get_clip_value(norms_window, step):
         return max(grad_clip_min, min(grad_clip_max, clip_value))
 
 
+# Returns the likelihood of calculating loss by full sequence
+def get_loss_likelihood(step):
+    if not loss_by_later_subchunks:
+        return 1.0
+    else:
+        if step > warmup_steps:
+            return 0.0
+        else:
+
+            return 1.0 - (float(step) / float(max(1, warmup_steps)))
+
+
 best_val_loss = 999.9
 eval_every = 400
 val_loss_steps = 10
@@ -222,27 +240,37 @@ for step in t:
         with torch.no_grad():
             val_loss_accum = 0.0
             for _ in range(val_loss_steps):
-                x, y = val_loader.next_batch(loss_by_second_subchunk)
-                x = x.to(device)
-                y = y.to(device)
-
-                if 'cuda' in device:
-                    with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                        # Calculate loss only for the second chunk
-                        if loss_by_second_subchunk:
-                            logits, _ = model(x)
-                            loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
-                        # Calculate loss only for the full sequence
-                        else:
+                r = random.random()
+                # Full sequence loss
+                if r < get_loss_likelihood(step):
+                    x, y = val_loader.next_batch(False)
+                    x = x.to(device)
+                    y = y.to(device)
+                    if 'cuda' in device:
+                        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                             _, loss = model(x, y)
-                else:
-                    # Calculate loss only for the second chunk
-                    if loss_by_second_subchunk:
-                        logits, _ = model(x)
-                        loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
-                    # Calculate loss only for the full sequence
                     else:
                         _, loss = model(x, y)
+                # 3rd or 2nd+3rd subchunk loss
+                else:
+                    x, y, z = val_loader.next_batch(True)
+                    x = x.to(device)
+                    y = y.to(device)
+                    z = z.to(device)
+                    if 'cuda' in device:
+                        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                            logits, _ = model(x)
+                    else:
+                        logits, _ = model(x)
+                    # Predict third subchunk
+                    if r < third_subchunk_predict_percentage:
+                        inputs = logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1))
+                        targets = z.view(-1)
+                    # Predict second+third subchunks
+                    else:
+                        inputs = logits[:, -chunk_size*2:].contiguous().view(-1, logits.size(-1))
+                        targets = torch.cat([y, z], dim=1).view(-1)
+                    loss = F.cross_entropy(inputs, targets)
 
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
@@ -257,10 +285,10 @@ for step in t:
             }, step=step)
             if last_step or (step > warmup_steps and val_loss_accum.item() < best_val_loss):
                 best_val_loss = min(best_val_loss, val_loss_accum.item())
-                if best_val_loss < 4.75:
+                if best_val_loss < 5.225:  #4.75:
                     val_loss_steps = 70
                     eval_every = 80
-                elif best_val_loss < 4.825:
+                elif best_val_loss < 5.365:  #4.825:
                     val_loss_steps = 50
                     eval_every = 120
                 else:
@@ -286,18 +314,31 @@ for step in t:
     loss_accum = 0.0
 
     for micro_step in range(grad_accum_steps):
-        x, y = train_loader.next_batch(loss_by_second_subchunk)
-        x = x.to(device)
-        y = y.to(device)
-
-        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-            # Calculate loss only for the second chunk
-            if loss_by_second_subchunk:
-                logits, _ = model(x)
-                loss = F.cross_entropy(logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1)), y.view(-1))
-            # Calculate loss only for the full sequence
-            else:
+        r = random.random()
+        # Full sequence loss
+        if r < get_loss_likelihood(step):
+            x, y = train_loader.next_batch(False)
+            x = x.to(device)
+            y = y.to(device)
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                 _, loss = model(x, y)
+        # 3rd or 2nd+3rd subchunk loss
+        else:
+            x, y, z = train_loader.next_batch(True)
+            x = x.to(device)
+            y = y.to(device)
+            z = z.to(device)
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                logits, _ = model(x)
+            # Predict third subchunk
+            if r < third_subchunk_predict_percentage:
+                inputs = logits[:, -chunk_size:].contiguous().view(-1, logits.size(-1))
+                targets = z.view(-1)
+            # Predict second+third subchunks
+            else:
+                inputs = logits[:, -chunk_size * 2:].contiguous().view(-1, logits.size(-1))
+                targets = torch.cat([y, z], dim=1).view(-1)
+            loss = F.cross_entropy(inputs, targets)
 
         loss_accum += loss.detach() / grad_accum_steps
         loss = loss / grad_accum_steps

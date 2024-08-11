@@ -9,9 +9,10 @@ from gpt2 import GPT, GPTConfig
 from two_sep_tokenizer import AudioTokenizer
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
+SUB_CHUNK_LENGTH = 6
 
 
-def load_and_prepare_audio(file_path, tokenizer):
+def load_and_prepare_audio(file_path, start_time, input_length, tokenizer):
     waveform, sample_rate = torchaudio.load(file_path)
 
     # Convert to mono if stereo
@@ -23,24 +24,14 @@ def load_and_prepare_audio(file_path, tokenizer):
         resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=tokenizer.sample_rate)
         waveform = resampler(waveform)
 
-    # Trim to 5.5 seconds if longer
-    max_length = 5.5 * tokenizer.sample_rate
-    if waveform.size(1) > max_length:
-        waveform = waveform[:, :max_length]
+    # Ensure at least SUB_CHUNK_LENGTH*3 seconds of audio remain after the start time
+    if waveform.size(1) - int(start_time * tokenizer.sample_rate) < int(SUB_CHUNK_LENGTH * 3 * tokenizer.sample_rate):
+        raise ValueError(f"Audio is too short after start time. Start time: {start_time}, Required remaining length: {SUB_CHUNK_LENGTH * 3}")
 
-    target_length = int(4.5 * tokenizer.sample_rate)
-
-    if waveform.size(1) > target_length:
-        # Center crop
-        start = (waveform.size(1) - target_length) // 2
-        waveform = waveform[:, start:start + target_length]
-    elif waveform.size(1) < target_length:
-        # Pad
-        padding_needed = target_length - waveform.size(1)
-        max_end_padding = min(0.5 * tokenizer.sample_rate, padding_needed // 2)
-        end_padding = int(max_end_padding)
-        start_padding = padding_needed - end_padding
-        waveform = F.pad(waveform, (start_padding, end_padding))
+    # Slice audio from the start time
+    start = int(start_time * tokenizer.sample_rate)
+    end = start + int(input_length * tokenizer.sample_rate)
+    waveform = waveform[:, start:end]
 
     return waveform
 
@@ -50,7 +41,7 @@ def tokenize_input(waveform, tokenizer):
     return tokens
 
 
-def generate_audio(model, input_tokens, num_return_sequences=1, max_new_tokens=768, temperature=0.9,
+def generate_audio(model, input_tokens, num_return_sequences=1, max_new_tokens=1024, temperature=0.9,
                    top_k=650):
     input_tokens = input_tokens.unsqueeze(0).repeat(num_return_sequences, 1).to(device)
 
@@ -114,14 +105,17 @@ def main():
 
     # Load and prepare audio
     audio_path = "./tweet.mp3"  # Replace with your audio file path
-    waveform = load_and_prepare_audio(audio_path, tokenizer)
+    start_time = 10  # Seconds
+    input_length = 6  # Seconds
+    assert input_length == 6 or input_length == 12
+    waveform = load_and_prepare_audio(audio_path, start_time, input_length, tokenizer)
 
     # Tokenize input
     input_tokens = tokenize_input(waveform, tokenizer)
 
     # Generate audio
     num_return_sequences = 3
-    output_tokens = generate_audio(model, input_tokens, num_return_sequences)
+    output_tokens = generate_audio(model, input_tokens, num_return_sequences, max_new_tokens=2048 if input_length == 6 else 1024)
 
     # Decode and save audio
     for i in range(num_return_sequences):

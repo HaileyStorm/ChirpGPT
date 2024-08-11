@@ -1,6 +1,6 @@
 import torch
 import torchaudio
-from speech_tokenizer import SpeechTokenizer
+from two_sep_tokenizer import AudioTokenizer
 import numpy as np
 from scipy.io import wavfile
 
@@ -8,11 +8,11 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
 
 # Initialize the tokenizer
-tokenizer = SpeechTokenizer(device=device)
+tokenizer = AudioTokenizer(device=device)
 
 # Load a small clip from the audio file
 audio_path = "./tiny-sherlock-audio/adventuresholmes_01_doyle_64kb.mp3"
-waveform, sample_rate = torchaudio.load(audio_path, num_frames=10 * 24000)  # Load 10 seconds
+waveform, sample_rate = torchaudio.load(audio_path, num_frames=10 * tokenizer.sample_rate)  # Load 10 seconds
 
 # Resample to 32kHz if necessary
 if sample_rate != tokenizer.sample_rate:
@@ -24,7 +24,7 @@ if waveform.size(0) > 1:
     waveform = torch.mean(waveform, dim=0, keepdim=True)
 
 # Split the audio into chunks
-chunk_size = int(4.5 * 32000)
+chunk_size = int(6 * tokenizer.sample_rate)
 chunks = [waveform[:, i:i+chunk_size] for i in range(0, waveform.size(1), chunk_size)]
 
 # Pad the last chunk if necessary

@@ -6,14 +6,17 @@ from tqdm import tqdm
 from torch.nn import functional as F
 from scipy.io import wavfile
 from gpt2 import GPT, GPTConfig
-from speech_tokenizer import SpeechTokenizer
+from two_sep_tokenizer import AudioTokenizer
 import sounddevice as sd
 import time
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
+SUB_CHUNK_LENGTH = 6  # 4.5
+TOKENS_TO_PREDICT = 2048  # 768
 
-def record_audio(tokenizer, duration=4.5):
+
+def record_audio(tokenizer, duration=SUB_CHUNK_LENGTH):
     print(f"Recording for {duration} seconds...")
     sample_rate = tokenizer.sample_rate
     recording = sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=1)
@@ -39,7 +42,7 @@ def tokenize_input(waveform, tokenizer):
     return tokens
 
 
-def generate_audio(model, input_tokens, num_return_sequences=1, max_new_tokens=768, temperature=0.95,
+def generate_audio(model, input_tokens, num_return_sequences=1, max_new_tokens=TOKENS_TO_PREDICT, temperature=0.95,
                    top_k=650):
     input_tokens = input_tokens.unsqueeze(0).repeat(num_return_sequences, 1).to(device)
 
@@ -99,7 +102,7 @@ def main():
     model.eval().to(device)
 
     # Initialize tokenizer
-    tokenizer = SpeechTokenizer(device=device)
+    tokenizer = AudioTokenizer(device=device)
 
     waveform = record_audio(tokenizer)
 

@@ -29,7 +29,7 @@ class GPTConfig:
     n_head: int = 8
     n_embd: int = 576
 
-    #going to do 13, 12, 960
+    #going to do 13, 12, 864
 
 
 class CausalSelfAttention(nn.Module):
