@@ -31,14 +31,6 @@ def pad_audio(waveform, sample_rate):
     if audio_length < samples_per_chunk:
         pad_size = samples_per_chunk - audio_length
         waveform = torch.nn.functional.pad(waveform, (0, pad_size))
-        audio_length = waveform.shape[1]
-
-    # Pad to make it divisible by sample_rate
-    step_size = sample_rate * SECONDS_PER_STEP
-    remainder = audio_length % step_size
-    if remainder != 0:
-        pad_size = step_size - remainder
-        waveform = torch.nn.functional.pad(waveform, (0, pad_size))
 
     return waveform
 
@@ -60,10 +52,20 @@ def process_audio(waveforms, sample_rates):
 
     tokenized_chunks = [[] for _ in range(len(waveforms))]
     max_length = max(w.shape[1] for w in processed_waveforms)
+    # Allow one subchunk to be mostly, but not entirely, silence (allow up to almost one subchunk of silence per song)
+    max_pad = samples_per_chunk // 3.1
 
     for start_time in range(0, max_length - samples_per_chunk + 1, tokenizer.sample_rate * SECONDS_PER_STEP):  #tqdm(range(0, max_length - samples_per_chunk + 1, tokenizer.sample_rate * SECONDS_PER_STEP), "\tChunking and tokenizing batch...", dynamic_ncols=True):
         end_time = start_time + samples_per_chunk
-        batch_chunks = [w[:, start_time:end_time] for w in processed_waveforms if w.shape[1] > end_time]
+        batch_chunks = []
+        for w in processed_waveforms:
+            if w.shape[1] >= end_time - max_pad:
+                if w.shape[1] < end_time:
+                    pad_size = end_time - w.shape[1]
+                    padded_w = torch.nn.functional.pad(w, (0, pad_size))
+                else:
+                    padded_w = w
+                batch_chunks.append(padded_w[:, start_time:end_time])
 
         if not batch_chunks:
             break
