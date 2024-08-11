@@ -18,6 +18,8 @@ SUB_CHUNK_LENGTH = 6  # seconds
 SECONDS_PER_STEP = 10  # seconds
 BATCH_SIZE = 3
 
+assert SECONDS_PER_STEP <= CHUNK_LENGTH
+
 # Initialize tokenizer
 device = "cuda" if torch.cuda.is_available() else "cpu"
 tokenizer = AudioTokenizer(device=device)
