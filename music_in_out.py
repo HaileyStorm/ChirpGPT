@@ -104,9 +104,9 @@ def main():
     tokenizer = AudioTokenizer(device=device)
 
     # Load and prepare audio
-    audio_path = "./tweet.mp3"  # Replace with your audio file path
+    audio_path = "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/01. Dua lipa - Training Season.mp3"  # Replace with your audio file path
     start_time = 10  # Seconds
-    input_length = 6  # Seconds
+    input_length = 12  # Seconds
     assert input_length == 6 or input_length == 12
     waveform = load_and_prepare_audio(audio_path, start_time, input_length, tokenizer)
 

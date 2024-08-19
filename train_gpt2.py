@@ -71,9 +71,10 @@ grok_alpha = 0.925 #0.96
 grok_lamb = 1.1  #0.991
 weight_decay = 0.113333
 
-max_lr = 3.15e-4 #3.6667e-4  #3.9e-4
-init_lr_pct = 0.075 #0.06667
-min_lr_pct = 0.1 #0.01
+# pi is just being silly, ~3.15 was arrived at experimentally
+max_lr = math.pi * 1e-4
+init_lr_pct = 0.075  #0.06667
+min_lr_pct = 0.01  #0.1
 
 loss_by_later_subchunks = False
 # When loss_by_later_subchunks = True, warmup to:
@@ -82,7 +83,7 @@ third_subchunk_predict_percentage = 0.75
 
 # At 170MB tokenized data & next-chunk loss, val starts increasing ~epoch 5-6. With music at least seems start earlier for full sequence loss.
 # Maybe try 3-4 epochs full-sequence then ~2-4(?) next-chunk(s)
-num_epochs = 6
+num_epochs = 3  # Can be fraction
 grad_clip_percentile = 0.0875
 grad_clip_min = 1e-3
 grad_clip_max = 0.85
@@ -90,7 +91,7 @@ norms_window_size = 350
 # Decrease lr when norm percentile & loss are increasing
 max_clip_slope = 1.1
 lr_adj_rate = 0.925  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps while conditions met
-warmup_steps = 2200 #int(max_steps*0.01)
+warmup_steps = 2600  # was 2200
 
 resume = False
 resume_from = './BIRD_FINAL_32khz_Small_NoTest_model_64432.pt'

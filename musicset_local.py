@@ -1,21 +1,22 @@
 import os
 from random import shuffle
-
 import torch
 import torchaudio
 import numpy as np
 from tqdm import tqdm
+import json
 from two_sep_tokenizer import AudioTokenizer
 
 # Constants
 INPUT_DIR = '/media/hailey/TVBox/music_dl'
 DATA_DIR = '/media/hailey/More/AI/gpt2audio/music_data'
 PREFIX = 'music'
-SHARD_SIZE = 5 * 1024 * 1024  # 5MB in bytes
+SHARD_SIZE = 15 * 1024 * 1024  # 15MB in bytes
 CHUNK_LENGTH = 18  # seconds
 SUB_CHUNK_LENGTH = 6  # seconds
 # The bigger this is, the more empty data will be tokenized (each file is padded to be divisible by this)
-SECONDS_PER_STEP = 10  # seconds
+# With current main dataset, 10 = 36 hours to tokenize (1 = something like 12 days iirc)
+SECONDS_PER_STEP = 7  # seconds
 BATCH_SIZE = 3
 
 assert SECONDS_PER_STEP <= CHUNK_LENGTH
@@ -23,6 +24,25 @@ assert SECONDS_PER_STEP <= CHUNK_LENGTH
 # Initialize tokenizer
 device = "cuda" if torch.cuda.is_available() else "cpu"
 tokenizer = AudioTokenizer(device=device)
+
+state_file = os.path.join(DATA_DIR, 'shuffle_state.json')
+
+
+def save_shuffle_state(audio_files, processed_count):
+    state = {
+        'shuffled_files': audio_files,
+        'processed_count': processed_count
+    }
+    with open(state_file, 'w') as f:
+        json.dump(state, f)
+
+
+def load_shuffle_state():
+    if os.path.exists(state_file):
+        with open(state_file, 'r') as f:
+            state = json.load(f)
+        return state['shuffled_files'], state['processed_count']
+    return None, None
 
 
 def pad_audio(waveform, sample_rate):
@@ -115,57 +135,89 @@ def main():
     current_train_shard = []
     current_val_shard = []
 
-    print("Finding files...")
-    audio_files = []
-    for root, dirs, files in os.walk(INPUT_DIR):
-        for file in files:
-            if file.lower().endswith(('.wav', '.mp3', '.flac', '.ogg')):
-                audio_files.append(os.path.join(root, file))
-    print(f"Found {len(audio_files)} files.")
-    shuffle(audio_files)
+    shuffled_files, processed_count = load_shuffle_state()
+    if shuffled_files is None:
+        print("Finding files...")
+        audio_files = []
+        for root, dirs, files in os.walk(INPUT_DIR):
+            for file in files:
+                if file.lower().endswith(('.wav', '.mp3', '.flac', '.ogg')):
+                    audio_files.append(os.path.join(root, file))
+        print(f"Found {len(audio_files)} files.\n")
+        shuffle(audio_files)
+        processed_count = 0
+    else:
+        audio_files = shuffled_files
+        print(f"Resuming from file {processed_count} of {len(audio_files)}\n")
 
     total_chunks = 0
-    bar = tqdm(range(0, len(audio_files), BATCH_SIZE), desc="Processing audio files", dynamic_ncols=True)
-    for i in bar:
-        batch_files = audio_files[i:i + BATCH_SIZE]
-        waveforms = []
-        sample_rates = []
-        for file_path in batch_files:  # tqdm(batch_files, desc="\tLoading audio data...", dynamic_ncols=True):
-            try:
-                waveform, sample_rate = torchaudio.load(file_path)
-                if waveform.shape[1] / sample_rate >= CHUNK_LENGTH:
-                    waveforms.append(waveform)
-                    sample_rates.append(sample_rate)
-            except:
-                print(f"Error opening {file_path}")
+    bar = tqdm(range(processed_count, len(audio_files), BATCH_SIZE), initial=processed_count//BATCH_SIZE, total=len(audio_files) // BATCH_SIZE, desc="Processing audio files", dynamic_ncols=True, unit="batch")
+    try:
+        for i in bar:
+            batch_files = audio_files[i:i + BATCH_SIZE]
+            waveforms = []
+            sample_rates = []
+            for file_path in batch_files:  # tqdm(batch_files, desc="\tLoading audio data...", dynamic_ncols=True):
+                try:
+                    waveform, sample_rate = torchaudio.load(file_path)
+                    if waveform.shape[1] / sample_rate >= CHUNK_LENGTH:
+                        waveforms.append(waveform)
+                        sample_rates.append(sample_rate)
+                except:
+                    print(f"Error opening {file_path}")
 
-        if not waveforms:
-            continue
+            if not waveforms:
+                continue
 
-        tokenized_chunks = process_audio(waveforms, sample_rates)
+            tokenized_chunks = process_audio(waveforms, sample_rates)
 
-        for file_chunks in tokenized_chunks:
-            total_chunks += len(file_chunks)
-            for triple in file_chunks:
-                if np.random.random() < 0.01:  # 1% chance for validation
-                    [current_val_shard.extend(chunk) for chunk in triple]
-                    if len(current_val_shard) * 2 >= (SHARD_SIZE // 10):
-                        val_shard_index = save_shard(current_val_shard, val_shard_index, 'val')
-                        current_val_shard = []
-                else:
-                    [current_train_shard.extend(chunk) for chunk in triple]
-                    if len(current_train_shard) * 2 >= SHARD_SIZE:
-                        train_shard_index = save_shard(current_train_shard, train_shard_index, 'train')
-                        current_train_shard = []
+            save_shards = False
+            for file_chunks in tokenized_chunks:
+                total_chunks += len(file_chunks)
+                for triple in file_chunks:
+                    if np.random.random() < 0.01:  # 1% chance for validation
+                        [current_val_shard.extend(chunk) for chunk in triple]
+                        # Honestly this should never happen since whenever a train shard is saved a val shard is, but...
+                        # Just in case (/ leftover from old logic)
+                        if len(current_val_shard) * 2 >= (SHARD_SIZE // 10):
+                            save_shards = True
+                    else:
+                        [current_train_shard.extend(chunk) for chunk in triple]
+                        if len(current_train_shard) * 2 >= SHARD_SIZE:
+                            save_shards = True
 
-        bar.set_description(
-            f"Processing audio files (processed {total_chunks} chunks, avg. {total_chunks / (i + BATCH_SIZE):.1f}/file)")
+            bar.set_description(
+                f"Processing audio files (processed {total_chunks} chunks, avg. {total_chunks / (i + BATCH_SIZE):.1f}/file)")
+
+            processed_count = i + BATCH_SIZE
+            # Save state at least every 50 batches, and if we've saved any data.
+            # Also ensures that any time train data is saved, val data is saved,
+            # so the ratio of actually saved splits stays correct.
+            if save_shards or (processed_count // BATCH_SIZE) % 50 == 0:
+                save_shuffle_state(audio_files, processed_count)
+                if current_val_shard:
+                    val_shard_index = save_shard(current_val_shard, val_shard_index, 'val')
+                    current_val_shard = []
+                if current_train_shard:
+                    train_shard_index = save_shard(current_train_shard, train_shard_index, 'train')
+                    current_train_shard = []
+
+    except KeyboardInterrupt:
+        print("\nInterrupted. Saving progress...")
+        save_shuffle_state(audio_files, processed_count)
+        if current_val_shard:
+            save_shard(current_val_shard, val_shard_index, 'val')
+        if current_train_shard:
+            save_shard(current_train_shard, train_shard_index, 'train')
+        exit()
+
 
     # Save any remaining data in the last shards
     if current_train_shard:
         save_shard(current_train_shard, train_shard_index, 'train')
     if current_val_shard:
         save_shard(current_val_shard, val_shard_index, 'val')
+    os.remove(state_file)
 
 
 if __name__ == "__main__":
