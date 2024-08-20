@@ -60,7 +60,8 @@ def pad_audio(waveform, sample_rate):
 def process_audio(waveforms, sample_rates):
     # Resample and convert to mono if necessary
     processed_waveforms = []
-    for waveform, sample_rate in zip(waveforms, sample_rates):  #tqdm(zip(waveforms, sample_rates), "\tResampling and padding batch...", dynamic_ncols=True, total=len(waveforms)):
+    for waveform, sample_rate in zip(waveforms,
+                                     sample_rates):  #tqdm(zip(waveforms, sample_rates), "\tResampling and padding batch...", dynamic_ncols=True, total=len(waveforms)):
         if sample_rate != tokenizer.sample_rate:
             resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=tokenizer.sample_rate)
             waveform = resampler(waveform)
@@ -77,7 +78,8 @@ def process_audio(waveforms, sample_rates):
     # Allow one subchunk to be mostly, but not entirely, silence (allow up to almost one subchunk of silence per song)
     max_pad = samples_per_chunk // 3.1
 
-    for start_time in range(0, max_length - samples_per_chunk + 1, tokenizer.sample_rate * SECONDS_PER_STEP):  #tqdm(range(0, max_length - samples_per_chunk + 1, tokenizer.sample_rate * SECONDS_PER_STEP), "\tChunking and tokenizing batch...", dynamic_ncols=True):
+    for start_time in range(0, max_length - samples_per_chunk + 1,
+                            tokenizer.sample_rate * SECONDS_PER_STEP):  #tqdm(range(0, max_length - samples_per_chunk + 1, tokenizer.sample_rate * SECONDS_PER_STEP), "\tChunking and tokenizing batch...", dynamic_ncols=True):
         end_time = start_time + samples_per_chunk
         batch_chunks = []
         for w in processed_waveforms:
@@ -151,9 +153,12 @@ def main():
         print(f"Resuming from file {processed_count} of {len(audio_files)}\n")
 
     total_chunks = 0
-    bar = tqdm(range(processed_count, len(audio_files), BATCH_SIZE), initial=processed_count//BATCH_SIZE, total=len(audio_files) // BATCH_SIZE, desc="Processing audio files", dynamic_ncols=True, unit="batch")
+    bar = tqdm(range(processed_count, len(audio_files), BATCH_SIZE), initial=processed_count // BATCH_SIZE,
+               total=len(audio_files) // BATCH_SIZE, desc="Processing audio files", dynamic_ncols=True, unit="batch")
     try:
         for i in bar:
+            if total_chunks == 0:
+                print(f"{i} - Make sure i is == processed_count on resume, not tqdm's initial. DELETE ME.")
             batch_files = audio_files[i:i + BATCH_SIZE]
             waveforms = []
             sample_rates = []
@@ -177,14 +182,10 @@ def main():
                 for triple in file_chunks:
                     if np.random.random() < 0.01:  # 1% chance for validation
                         [current_val_shard.extend(chunk) for chunk in triple]
-                        # Honestly this should never happen since whenever a train shard is saved a val shard is, but...
-                        # Just in case (/ leftover from old logic)
-                        if len(current_val_shard) * 2 >= (SHARD_SIZE // 10):
-                            save_shards = True
                     else:
                         [current_train_shard.extend(chunk) for chunk in triple]
-                        if len(current_train_shard) * 2 >= SHARD_SIZE:
-                            save_shards = True
+            save_shards = len(current_train_shard) * 2 >= SHARD_SIZE or \
+                          len(current_val_shard) * 2 >= (SHARD_SIZE // 10)  # Honestly this should never happen but...
 
             bar.set_description(
                 f"Processing audio files (processed {total_chunks} chunks, avg. {total_chunks / (i + BATCH_SIZE):.1f}/file)")
@@ -210,7 +211,6 @@ def main():
         if current_train_shard:
             save_shard(current_train_shard, train_shard_index, 'train')
         exit()
-
 
     # Save any remaining data in the last shards
     if current_train_shard:
