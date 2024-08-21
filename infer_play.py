@@ -7,6 +7,8 @@ from torch.nn import functional as F
 from speech_tokenizer import SpeechTokenizer
 from scipy.io.wavfile import write
 
+checkpoint_path = './log/model_s71600_vl5.1429.pt'
+shampoo = False
 
 device = "cpu"
 if torch.cuda.is_available():
@@ -16,19 +18,31 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 print(f"using device: {device}")
 model = GPT(GPTConfig())
 
-original_state_dict = torch.load('./log/model_s71600_vl5.1429.pt', map_location=torch.device('cpu'))
+if shampoo:
+    state_dict = {}
+    torch.distributed.checkpoint.load_state_dict(
+        state_dict=state_dict,
+        storage_reader=torch.distributed.checkpoint.FileSystemReader(checkpoint_path),
+    )
 
-# Corrected state dictionary
-state_dict = {
-    'model': OrderedDict([
-        (key.replace('_orig_mod.', ''), value) for key, value in original_state_dict['model'].items()
-    ]),
-    'config': original_state_dict['config'],
-    'step': original_state_dict['step'],
-    'val_loss': original_state_dict['val_loss']
-}
+    # Load model state
+    model_state_dict = OrderedDict([
+        (key.replace('_orig_mod.', ''), value) for key, value in state_dict['model'].items()
+    ])
+    model.load_state_dict(model_state_dict)
+else:
+    original_state_dict = torch.load(checkpoint_path, map_location=torch.device('cpu'))
+    # Corrected state dictionary
+    state_dict = {
+        'model': OrderedDict([
+            (key.replace('_orig_mod.', ''), value) for key, value in original_state_dict['model'].items()
+        ]),
+        'config': original_state_dict['config'],
+        'step': original_state_dict['step'],
+        'val_loss': original_state_dict['val_loss']
+    }
+    model.load_state_dict(state_dict['model'])
 
-model.load_state_dict(state_dict['model'])
 model.eval()
 model.to(device)
 

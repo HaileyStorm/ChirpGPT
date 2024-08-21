@@ -8,6 +8,9 @@ from scipy.io import wavfile
 from gpt2 import GPT, GPTConfig
 from two_sep_tokenizer import AudioTokenizer
 
+checkpoint_path = './log/model_s71600_vl5.1429.pt'
+shampoo = False
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 SUB_CHUNK_LENGTH = 6
 
@@ -94,10 +97,24 @@ def main():
 
     # Load model
     model = GPT(GPTConfig())
-    state_dict = torch.load('./log/model_s47120_vl4.5667.pt', map_location=device)
-    corrected_state_dict = OrderedDict(
-        [(key.replace('_orig_mod.', ''), value) for key, value in state_dict['model'].items()])
-    model.load_state_dict(corrected_state_dict)
+    if shampoo:
+        state_dict = {}
+        torch.distributed.checkpoint.load_state_dict(
+            state_dict=state_dict,
+            storage_reader=torch.distributed.checkpoint.FileSystemReader(checkpoint_path),
+        )
+
+        # Load model state
+        model_state_dict = OrderedDict([
+            (key.replace('_orig_mod.', ''), value) for key, value in state_dict['model'].items()
+        ])
+        model.load_state_dict(model_state_dict)
+    else:
+        state_dict = torch.load(checkpoint_path, map_location=device)
+        corrected_state_dict = OrderedDict(
+            [(key.replace('_orig_mod.', ''), value) for key, value in state_dict['model'].items()])
+        model.load_state_dict(corrected_state_dict)
+
     model.eval().to(device)
 
     # Initialize tokenizer
