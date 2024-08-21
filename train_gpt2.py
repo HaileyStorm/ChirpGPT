@@ -63,9 +63,9 @@ if master_process:
 
 # sequence length
 T = 3072
-total_batch_size = T*48  # pick something about 32768
+total_batch_size = T*40  # pick something about 32768
 # micro batch size
-B = 24
+B = 8
 
 grok_alpha = 0.925
 grok_lamb = 1.1
@@ -113,7 +113,7 @@ train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp
 val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val", ddp=ddp, master_process=master_process, critical_divisor=chunk_size)
 
 # Was 15-64k. In theory our goal is 610k +  (~2TB of 32khz audio if it were single epoch, or ~57.5GB tokenized [total, obviously some # epochs > 1 is fine, at least 6 & probably more w/ more data])
-max_steps = (num_epochs * train_loader.total_tokens) // total_batch_size
+max_steps = int((num_epochs * train_loader.total_tokens) // total_batch_size)
 print(f"Max steps: {max_steps}, Warmup steps: {warmup_steps}")
 
 torch.set_float32_matmul_precision('high')
@@ -208,7 +208,6 @@ def get_loss_likelihood(step):
         if step > warmup_steps:
             return 0.0
         else:
-
             return 1.0 - (float(step) / float(max(1, warmup_steps)))
 
 

@@ -96,7 +96,7 @@ def main():
     print(f"Using device: {device}")
 
     # Load model
-    model = GPT(GPTConfig())
+    model = GPT(GPTConfig(block_size=3072))
     if shampoo:
         state_dict = {}
         torch.distributed.checkpoint.load_state_dict(

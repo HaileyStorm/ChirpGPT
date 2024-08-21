@@ -16,7 +16,7 @@ if torch.cuda.is_available():
 elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     device = "mps"
 print(f"using device: {device}")
-model = GPT(GPTConfig())
+model = GPT(GPTConfig(block_size=3072))
 
 if shampoo:
     state_dict = {}

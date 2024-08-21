@@ -64,9 +64,9 @@ if master_process:
 
 # sequence length
 T = 3072
-total_batch_size = T*48  # pick something about 32768
+total_batch_size = T*40  # pick something about 32768
 # micro batch size
-B = 24
+B = 8
 
 grok_alpha = 0.925
 grok_lamb = 1.1
