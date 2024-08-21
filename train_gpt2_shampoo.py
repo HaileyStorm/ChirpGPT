@@ -24,6 +24,7 @@ from distributed_shampoo.shampoo_types import AdamGraftingConfig, DDPShampooConf
 # set up DDP (distributed data parallel).
 # torchrun command sets the env variables RANK, LOCAL_RANK, and WORLD_SIZE
 ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
+print(ddp)
 if ddp:
     # use of DDP atm demands CUDA, we set the device appropriately according to rank
     assert torch.cuda.is_available(), "for now i think we need CUDA for DDP"
@@ -32,6 +33,7 @@ if ddp:
     ddp_local_rank = int(os.environ['LOCAL_RANK'])
     ddp_world_size = int(os.environ['WORLD_SIZE'])
     device = f'cuda:{ddp_local_rank}'
+    print(f"using device: {device}")
     torch.cuda.set_device(device)
     master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
 else:
@@ -47,6 +49,7 @@ else:
     elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         device = "mps"
     print(f"using device: {device}")
+    init_process_group(backend='nccl', rank=ddp_rank, world_size=ddp_world_size)
 
 # pytorch can be serious about its device vs. device_type distinction
 device_type = "cuda" if device.startswith("cuda") else "cpu"
@@ -68,14 +71,11 @@ total_batch_size = T*40  # pick something about 32768
 # micro batch size
 B = 8
 
-grok_alpha = 0.925
-grok_lamb = 1.1
-weight_decay = 0.113333
-
 # pi is just being silly, ~3.15 was arrived at experimentally
 max_lr = math.pi * 1e-4
 init_lr_pct = 0.075
 min_lr_pct = 0.01
+weight_decay = 0.113333
 
 loss_by_later_subchunks = False
 # When loss_by_later_subchunks = True, warmup to:
@@ -90,7 +90,7 @@ warmup_steps = 2600  # was 2200
 # Shampoo
 max_preconditioner_dim = 4096
 precondition_frequency = 100
-start_preconditioning_step = warmup_steps // 3
+start_preconditioning_step = int(warmup_steps // 3)
 
 resume = False
 resume_from = './BIRD_FINAL_32khz_Small_NoTest_model_64432.pt'
@@ -108,17 +108,18 @@ if master_process:
     print(f"total desired batch size: {total_batch_size}")
     print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
-train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train", ddp=ddp, master_process=master_process, critical_divisor=chunk_size)
-val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val", ddp=ddp, master_process=master_process, critical_divisor=chunk_size)
+train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train", ddp=False, master_process=master_process, critical_divisor=chunk_size)
+val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val", ddp=False, master_process=master_process, critical_divisor=chunk_size)
 
 # Was 15-64k. In theory our goal is 610k +  (~2TB of 32khz audio if it were single epoch, or ~57.5GB tokenized [total, obviously some # epochs > 1 is fine, at least 6 & probably more w/ more data])
-max_steps = (num_epochs * train_loader.total_tokens) // total_batch_size
+max_steps = int((num_epochs * train_loader.total_tokens) // total_batch_size)
 print(f"Max steps: {max_steps}, Warmup steps: {warmup_steps}")
 
 torch.set_float32_matmul_precision('high')
 
 # create model
 model = GPT(GPTConfig(block_size=T), init_weights=True)
+model.to(device)
 
 optimizer = DistributedShampoo(
     model.parameters(),
@@ -136,7 +137,7 @@ optimizer = DistributedShampoo(
     ),
     distributed_config=DDPShampooConfig(
         communication_dtype=CommunicationDType.FP32,
-        num_trainers_per_group=8,
+        num_trainers_per_group=1,
         communicate_params=False,
     ) if ddp else None,
 )
@@ -167,7 +168,6 @@ if resume:
 
     print("Checkpoint loaded successfully")
 
-model.to(device)
 use_compile = True
 if use_compile:
     model = torch.compile(model)

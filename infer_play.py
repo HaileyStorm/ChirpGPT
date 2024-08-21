@@ -4,7 +4,7 @@ from collections import OrderedDict
 import numpy as np
 from tqdm import tqdm
 from torch.nn import functional as F
-from speech_tokenizer import SpeechTokenizer
+from two_sep_tokenizer import AudioTokenizer
 from scipy.io.wavfile import write
 
 checkpoint_path = './log/model_s71600_vl5.1429.pt'
@@ -122,7 +122,7 @@ with tqdm(total=max_length) as pbar:
 with torch.no_grad():
     del xgen
     torch.cuda.empty_cache()
-tokenizer = SpeechTokenizer(device=device)
+tokenizer = AudioTokenizer(device=device)
 
 
 def find_last_instance_of_seperator(lst, element=seperator):
