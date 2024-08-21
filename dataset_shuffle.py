@@ -4,9 +4,9 @@ import random
 from tqdm import tqdm
 
 # Constants
-BLOCK_SIZE = 1536
-CRITICAL_DIVISOR = 768
-TARGET_SHARD_BLOCKS = 750
+BLOCK_SIZE = 3072
+CRITICAL_DIVISOR = 1024
+TARGET_SHARD_BLOCKS = 2500
 
 
 def load_dataset(data_root, split):
@@ -34,6 +34,7 @@ def process_shard(shard_data):
         processed_blocks.append(shard_data[start:end])
 
     if remainder > 0:
+        print("Shard not divisible by BLOCK_SIZE, but is divisible by CRITICAL_DIVISOR")
         if remainder % CRITICAL_DIVISOR == 0:
             # Handle the last blocks that are of size exactly a multiple of CRITICAL_DIVISOR
             while remainder:
@@ -53,7 +54,7 @@ def shuffle_and_create_new_shards(all_data, output_dir, split):
 
     # Combine blocks of CRITICAL_DIVISOR size if possible
     critical_blocks = [block for block in all_blocks if len(block) == CRITICAL_DIVISOR]
-    other_blocks = [block for block in all_blocks if len(block) == BLOCK_SIZE]
+    full_blocks = [block for block in all_blocks if len(block) == BLOCK_SIZE]
 
     # Combine CRITICAL_DIVISOR blocks into BLOCK_SIZE blocks where possible
     combined_blocks = []
@@ -61,9 +62,13 @@ def shuffle_and_create_new_shards(all_data, output_dir, split):
         combined_block = np.concatenate(critical_blocks[:BLOCK_SIZE // CRITICAL_DIVISOR])
         combined_blocks.append(combined_block)
         critical_blocks = critical_blocks[BLOCK_SIZE // CRITICAL_DIVISOR:]
+    if combined_blocks:
+        print(f"{len(combined_blocks)} CRITICAL_DIVISOR blocks were combined to BLOCK_SIZE blocks.")
+    if critical_blocks:
+        print(f"{len(critical_blocks)} CRITICAL_DIVISOR blocks could not be combined and will be ~added as-is~ excluded.")
 
     # Any remaining CRITICAL_DIVISOR blocks that cannot be combined are added as they are
-    all_blocks = other_blocks + combined_blocks + critical_blocks
+    all_blocks = full_blocks + combined_blocks  # + critical_blocks
     random.shuffle(all_blocks)
 
     total_blocks = len(all_blocks)
@@ -81,7 +86,7 @@ def shuffle_and_create_new_shards(all_data, output_dir, split):
 
 
 def main():
-    data_root = "./repaired_music_data"
+    data_root = "./music_data"
     output_root = "./music_data_shuffled"
 
     for split in ['train', 'val']:
