@@ -67,14 +67,14 @@ total_batch_size = T*48  # pick something about 32768
 # micro batch size
 B = 24
 
-grok_alpha = 0.925 #0.96
-grok_lamb = 1.1  #0.991
+grok_alpha = 0.925
+grok_lamb = 1.1
 weight_decay = 0.113333
 
 # pi is just being silly, ~3.15 was arrived at experimentally
 max_lr = math.pi * 1e-4
-init_lr_pct = 0.075  #0.06667
-min_lr_pct = 0.01  #0.1
+init_lr_pct = 0.075
+min_lr_pct = 0.01
 
 loss_by_later_subchunks = False
 # When loss_by_later_subchunks = True, warmup to:
@@ -83,7 +83,7 @@ third_subchunk_predict_percentage = 0.75
 
 # At 170MB tokenized data & next-chunk loss, val starts increasing ~epoch 5-6. With music at least seems start earlier for full sequence loss.
 # Maybe try 3-4 epochs full-sequence then ~2-4(?) next-chunk(s)
-num_epochs = 3  # Can be fraction
+num_epochs = 0.33 #3  # Can be fraction
 grad_clip_percentile = 0.0875
 grad_clip_min = 1e-3
 grad_clip_max = 0.85

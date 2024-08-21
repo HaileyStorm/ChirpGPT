@@ -6,7 +6,7 @@ from tqdm import tqdm
 # Constants
 BLOCK_SIZE = 3072
 CRITICAL_DIVISOR = 1024
-TARGET_SHARD_BLOCKS = 2500
+TARGET_SHARD_BLOCKS = 5000
 
 
 def load_dataset(data_root, split):
@@ -45,6 +45,7 @@ def process_shard(shard_data):
 
     return processed_blocks
 
+
 def shuffle_and_create_new_shards(all_data, output_dir, split):
     os.makedirs(output_dir, exist_ok=True)
 
@@ -80,9 +81,8 @@ def shuffle_and_create_new_shards(all_data, output_dir, split):
         shard_blocks = all_blocks[start:end]
 
         shard_data = np.concatenate(shard_blocks)
-        filename = os.path.join(output_dir, f"{split}_shard_{i:03d}.npy")
+        filename = os.path.join(output_dir, f"{split}_shard_{i:04d}.npy")
         np.save(filename, shard_data)
-
 
 
 def main():
