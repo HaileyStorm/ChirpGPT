@@ -176,7 +176,6 @@ def main():
 
             tokenized_chunks = process_audio(waveforms, sample_rates)
 
-            save_shards = False
             for file_chunks in tokenized_chunks:
                 total_chunks += len(file_chunks)
                 for triple in file_chunks:
