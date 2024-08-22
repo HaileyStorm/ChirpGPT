@@ -29,7 +29,10 @@ class GPTConfig:
     n_head: int = 8
     n_embd: int = 576
 
-    #going to do 13, 12, 864
+    # MUSIC
+    n_layer: int = 13
+    n_head: int = 12
+    n_embd: int = 864
 
 
 class CausalSelfAttention(nn.Module):
@@ -113,6 +116,18 @@ class GPT(nn.Module):
         # init params
         if init_weights:
             self.apply(self._init_weights)
+
+        # Log the model size
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):

@@ -6,6 +6,7 @@ from tqdm import tqdm
 from torch.nn import functional as F
 from two_sep_tokenizer import AudioTokenizer
 from scipy.io.wavfile import write
+import torch.distributed.checkpoint as dist_checkpoint
 
 checkpoint_path = './log/model_s71600_vl5.1429.pt'
 shampoo = False
@@ -20,9 +21,9 @@ model = GPT(GPTConfig(block_size=3072))
 
 if shampoo:
     state_dict = {}
-    torch.distributed.checkpoint.load_state_dict(
+    dist_checkpoint.load_state_dict(
         state_dict=state_dict,
-        storage_reader=torch.distributed.checkpoint.FileSystemReader(checkpoint_path),
+        storage_reader=dist_checkpoint.FileSystemReader(checkpoint_path),
     )
 
     # Load model state

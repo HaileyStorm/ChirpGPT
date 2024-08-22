@@ -5,6 +5,7 @@ import torch
 from gpt2 import GPTConfig, GPT
 from dataloader import DataLoaderLite
 from torch.distributed import init_process_group, destroy_process_group
+import torch.distributed.checkpoint as dist_checkpoint
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 import wandb
@@ -70,10 +71,9 @@ if master_process:
 T = 3072
 total_batch_size = T*42  # pick something about 32768
 # micro batch size
-B = 7
+B = 3
 
-# pi is just being silly, ~3.15 was arrived at experimentally
-max_lr = math.pi * 1e-4  # probably ~2.1-2.25 for 13x12x864 model
+max_lr = 1.99e-4  #2.785e-4
 init_lr_pct = 0.07
 min_lr_pct = 0.01
 weight_decay = 0.113333
@@ -85,16 +85,18 @@ third_subchunk_predict_percentage = 0.75
 
 # At 170MB tokenized data & next-chunk loss, val starts increasing ~epoch 5-6. With music at least seems start earlier for full sequence loss.
 # Maybe try 3-4 epochs full-sequence then ~2-4(?) next-chunk(s)
-num_epochs = 0.33 #3  # Can be fraction
-warmup_steps = 2600  # was 2200
+num_epochs = 2.5  # Can be fraction
+warmup_steps = 2000  # was 2200
 
 # Shampoo
 max_preconditioner_dim = 2048
 precondition_frequency = 75
-start_preconditioning_step = precondition_frequency
+start_preconditioning_step = int(((warmup_steps // precondition_frequency) + 1) * precondition_frequency)
 
 resume = False
-resume_from = './BIRD_FINAL_32khz_Small_NoTest_model_64432.pt'
+resume_from = './log/chkpt'
+# Reset the optimizer&schedule (do not load from checkpoint, only load the model state dict)
+reset = False
 
 # ------------------------------
 # END HYPER-PARAMETERS
@@ -179,9 +181,9 @@ if resume:
     print(f"Resuming from checkpoint: {checkpoint_path}")
 
     state_dict = {}
-    torch.distributed.checkpoint.load_state_dict(
+    dist_checkpoint.load_state_dict(
         state_dict=state_dict,
-        storage_reader=torch.distributed.checkpoint.FileSystemReader(checkpoint_path),
+        storage_reader=dist_checkpoint.FileSystemReader(checkpoint_path),
     )
 
     # Load model state
@@ -190,16 +192,15 @@ if resume:
     ])
     model.load_state_dict(model_state_dict)
 
-    # Load optimizer state
-    optimizer.load_distributed_state_dict(state_dict["optim"], key_to_param=model.named_parameters())
-
-    # Load scheduler state
-    scheduler.load_state_dict(state_dict["scheduler"])
-
-    if "step" in state_dict:
-        step = state_dict["step"]
-    if "val_loss" in state_dict:
-        best_val_loss = state_dict["val_loss"]
+    if not reset:
+        # Load optimizer state
+        optimizer.load_distributed_state_dict(state_dict["optim"], key_to_param=model.named_parameters())
+        # Load scheduler state
+        scheduler.load_state_dict(state_dict["scheduler"])
+        if "step" in state_dict:
+            step = state_dict["step"]
+        if "val_loss" in state_dict:
+            best_val_loss = state_dict["val_loss"]
 
     print("Checkpoint loaded successfully")
 
@@ -224,8 +225,8 @@ def get_loss_likelihood(step):
 
 
 best_val_loss = 999.9
-eval_every = 200
-val_loss_steps = 10
+eval_every = 50
+val_loss_steps = 7
 current_epoch = 0
 
 # create the log directory we will write checkpoints to and log to
@@ -289,20 +290,18 @@ for step in t:
             wandb.log({
                 "val/loss": val_loss_accum.item()
             }, step=step)
-            if last_step or (step > warmup_steps and val_loss_accum.item() < best_val_loss):
+            if step == eval_every or last_step or (step > warmup_steps and val_loss_accum.item() < best_val_loss):
                 best_val_loss = min(best_val_loss, val_loss_accum.item())
                 if best_val_loss < 5.225:  #4.75:
-                    val_loss_steps = 50
+                    val_loss_steps = 35
                     eval_every = 50
                 elif best_val_loss < 5.365:  #4.825:
-                    val_loss_steps = 25
+                    val_loss_steps = 20
                     eval_every = 100
                 else:
-                    val_loss_steps = 10
+                    val_loss_steps = 7
                     eval_every = 200
-            #if step > 0 and (step % 1600 == 0 or last_step):
-                # optionally write model checkpoints
-                checkpoint_path = os.path.join(log_dir, f"model_s{step:05d}_vl{val_loss_accum.item():.4f}")
+                checkpoint_path = os.path.join(log_dir, "chkpt") #f"model_s{step:05d}_vl{val_loss_accum.item():.4f}")
                 print(f"writing checkpoint to {checkpoint_path}")
                 state_dict = {
                     "model": model.state_dict(),
@@ -311,9 +310,9 @@ for step in t:
                     "step": step,
                     "val_loss": val_loss_accum.item(),
                 }
-                torch.distributed.checkpoint.save_state_dict(
+                dist_checkpoint.save_state_dict(
                     state_dict=state_dict,
-                    storage_writer=torch.distributed.checkpoint.FileSystemWriter(checkpoint_path),
+                    storage_writer=dist_checkpoint.FileSystemWriter(checkpoint_path),
                 )
 
     # do one step of the optimization
