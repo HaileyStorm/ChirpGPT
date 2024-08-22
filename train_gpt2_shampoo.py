@@ -24,7 +24,8 @@ from distributed_shampoo.shampoo_types import AdamGraftingConfig, DDPShampooConf
 # set up DDP (distributed data parallel).
 # torchrun command sets the env variables RANK, LOCAL_RANK, and WORLD_SIZE
 ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
-print(ddp)
+if not ddp:
+    print("This script has been tweaks specific to ddp; please change these or run with `torchrun train_gpt2_shampoo.py`")
 if ddp:
     # use of DDP atm demands CUDA, we set the device appropriately according to rank
     assert torch.cuda.is_available(), "for now i think we need CUDA for DDP"
@@ -59,7 +60,7 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
 if master_process:
-    wandb.init(project="ChirpGPT")
+    wandb.init(project="MusicGPT")
 
 # ------------------------------
 # HYPER-PARAMETERS
@@ -67,13 +68,13 @@ if master_process:
 
 # sequence length
 T = 3072
-total_batch_size = T*40  # pick something about 32768
+total_batch_size = T*42  # pick something about 32768
 # micro batch size
-B = 8
+B = 7
 
 # pi is just being silly, ~3.15 was arrived at experimentally
-max_lr = math.pi * 1e-4
-init_lr_pct = 0.075
+max_lr = math.pi * 1e-4  # probably ~2.1-2.25 for 13x12x864 model
+init_lr_pct = 0.07
 min_lr_pct = 0.01
 weight_decay = 0.113333
 
@@ -88,9 +89,9 @@ num_epochs = 0.33 #3  # Can be fraction
 warmup_steps = 2600  # was 2200
 
 # Shampoo
-max_preconditioner_dim = 4096
-precondition_frequency = 100
-start_preconditioning_step = int(warmup_steps // 3)
+max_preconditioner_dim = 2048
+precondition_frequency = 75
+start_preconditioning_step = precondition_frequency
 
 resume = False
 resume_from = './BIRD_FINAL_32khz_Small_NoTest_model_64432.pt'
@@ -108,6 +109,7 @@ if master_process:
     print(f"total desired batch size: {total_batch_size}")
     print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
+# Todo: Fix dataloader dpp (pass device & move to device within the dataloader?)
 train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train", ddp=False, master_process=master_process, critical_divisor=chunk_size)
 val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val", ddp=False, master_process=master_process, critical_divisor=chunk_size)
 
@@ -117,15 +119,37 @@ print(f"Max steps: {max_steps}, Warmup steps: {warmup_steps}")
 
 torch.set_float32_matmul_precision('high')
 
+
+class WarmupCosineScheduler(torch.optim.lr_scheduler._LRScheduler):
+    def __init__(self, optimizer, warmup_steps, max_steps, max_lr, init_lr_pct, min_lr_pct, last_epoch=-1):
+        self.warmup_steps = warmup_steps
+        self.max_steps = max_steps
+        self.max_lr = max_lr
+        self.init_lr_pct = init_lr_pct
+        self.min_lr_pct = min_lr_pct
+        super(WarmupCosineScheduler, self).__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        # Warmup phase: linearly increase learning rate
+        if self.last_epoch < self.warmup_steps:
+            return [base_lr * (self.init_lr_pct + (1.0 - self.init_lr_pct) * (self.last_epoch + 1) / self.warmup_steps) for base_lr in self.base_lrs]
+        # After warmup: Cosine annealing
+        else:
+            progress = (self.last_epoch - self.warmup_steps) / (self.max_steps - self.warmup_steps)
+            cosine_lr = 0.5 * (1 + math.cos(math.pi * progress))
+            min_lr = self.max_lr * self.min_lr_pct
+            return [min_lr + (self.max_lr - min_lr) * cosine_lr for _ in self.base_lrs]
+
+
 # create model
 model = GPT(GPTConfig(block_size=T), init_weights=True)
 model.to(device)
 
 optimizer = DistributedShampoo(
     model.parameters(),
-    lr=max_lr * init_lr_pct,
+    lr=max_lr,
     betas=(0.9, 0.999),
-    epsilon=1e-12,
+    epsilon=1e-10,
     weight_decay=weight_decay,
     max_preconditioner_dim=max_preconditioner_dim,
     precondition_frequency=precondition_frequency,
@@ -133,13 +157,21 @@ optimizer = DistributedShampoo(
     use_decoupled_weight_decay=True,
     grafting_config=AdamGraftingConfig(
         beta2=0.999,
-        epsilon=1e-12,
+        epsilon=1e-10,
     ),
     distributed_config=DDPShampooConfig(
         communication_dtype=CommunicationDType.FP32,
         num_trainers_per_group=1,
         communicate_params=False,
     ) if ddp else None,
+)
+scheduler = WarmupCosineScheduler(
+    optimizer=optimizer,
+    warmup_steps=warmup_steps,
+    max_steps=max_steps,
+    max_lr=max_lr,
+    init_lr_pct=init_lr_pct,
+    min_lr_pct=min_lr_pct
 )
 
 if resume:
@@ -161,6 +193,9 @@ if resume:
     # Load optimizer state
     optimizer.load_distributed_state_dict(state_dict["optim"], key_to_param=model.named_parameters())
 
+    # Load scheduler state
+    scheduler.load_state_dict(state_dict["scheduler"])
+
     if "step" in state_dict:
         step = state_dict["step"]
     if "val_loss" in state_dict:
@@ -176,21 +211,6 @@ if ddp:
 raw_model = model.module if ddp else model # always contains the "raw" unwrapped model
 
 
-def get_lr(it):
-    min_lr = max_lr * min_lr_pct
-    # 1) linear warmup for warmup_iters steps
-    if it < warmup_steps:
-        return max_lr * (init_lr_pct + (1.0 - init_lr_pct) * (float(it) / float(max(1, warmup_steps))))
-    # 2) if it > lr_decay_iters, return min learning rate
-    if it > max_steps:
-        return min_lr
-    # 3) in between, use cosine decay down to min learning rate
-    decay_ratio = (it - warmup_steps) / (max_steps - warmup_steps)
-    assert 0 <= decay_ratio <= 1
-    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff starts at 1 and goes to 0
-    return min_lr + coeff * (max_lr - min_lr)
-
-
 # Returns the likelihood of calculating loss by full sequence
 def get_loss_likelihood(step):
     if not loss_by_later_subchunks:
@@ -204,7 +224,7 @@ def get_loss_likelihood(step):
 
 
 best_val_loss = 999.9
-eval_every = 400
+eval_every = 200
 val_loss_steps = 10
 current_epoch = 0
 
@@ -215,7 +235,7 @@ os.makedirs(log_dir, exist_ok=True)
 #with open(log_file, "w") as f: # open for writing to clear the file
  #   pass
 
-t = tqdm(range(max_steps), f"Training epoch 1 of {num_epochs}")
+t = tqdm(range(max_steps), f"Training epoch 1 of {num_epochs}", dynamic_ncols=True)
 for step in t:
     t0 = time.time()
     last_step = (step == max_steps - 1)
@@ -272,14 +292,14 @@ for step in t:
             if last_step or (step > warmup_steps and val_loss_accum.item() < best_val_loss):
                 best_val_loss = min(best_val_loss, val_loss_accum.item())
                 if best_val_loss < 5.225:  #4.75:
-                    val_loss_steps = 70
-                    eval_every = 80
-                elif best_val_loss < 5.365:  #4.825:
                     val_loss_steps = 50
-                    eval_every = 120
+                    eval_every = 50
+                elif best_val_loss < 5.365:  #4.825:
+                    val_loss_steps = 25
+                    eval_every = 100
                 else:
                     val_loss_steps = 10
-                    eval_every = 400
+                    eval_every = 200
             #if step > 0 and (step % 1600 == 0 or last_step):
                 # optionally write model checkpoints
                 checkpoint_path = os.path.join(log_dir, f"model_s{step:05d}_vl{val_loss_accum.item():.4f}")
@@ -287,6 +307,7 @@ for step in t:
                 state_dict = {
                     "model": model.state_dict(),
                     "optim": optimizer.distributed_state_dict(key_to_param=model.named_parameters()),
+                    "scheduler": scheduler.state_dict(),
                     "step": step,
                     "val_loss": val_loss_accum.item(),
                 }
@@ -337,11 +358,8 @@ for step in t:
     if ddp:
         dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
 
-    # determine and set the learning rate for this iteration
-    lr = get_lr(step)
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
     optimizer.step()
+    scheduler.step()
     if device_type == "cuda":
         torch.cuda.synchronize() # wait for the GPU to finish work
     t1 = time.time()
@@ -359,7 +377,7 @@ for step in t:
         wandb.log({
             "etc/step": step,
             "etc/epoch": current_epoch,
-            "etc/lr": lr,
+            "etc/lr": scheduler.get_last_lr()[0],
             "etc/toks_per_sec": tokens_per_sec,
             "train/loss": loss_accum.item(),
         }, step=step)

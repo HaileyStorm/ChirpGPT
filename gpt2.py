@@ -9,7 +9,7 @@ import inspect
 class GPTConfig:
     # max sequence length
     block_size: int = 1536
-    vocab_size: int = 4112
+    vocab_size: int = 4160  # 4112
 
     # WIDE
     # max_lr ~ 2.333e-3, grad_clip_max ~ 0.5
