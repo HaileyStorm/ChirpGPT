@@ -9,7 +9,7 @@ from gpt2 import GPT, GPTConfig
 from two_sep_tokenizer import AudioTokenizer
 import torch.distributed.checkpoint as dist_checkpoint
 
-checkpoint_path = './log/model_s71600_vl5.1429.pt'
+checkpoint_path = './log/model.pt'
 shampoo = False
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -99,22 +99,23 @@ def main():
     # Load model
     model = GPT(GPTConfig(block_size=3072))
     if shampoo:
-        state_dict = {}
+        chkpt = {}
         dist_checkpoint.load_state_dict(
-            state_dict=state_dict,
+            state_dict=chkpt,
             storage_reader=dist_checkpoint.FileSystemReader(checkpoint_path),
         )
-
         # Load model state
         model_state_dict = OrderedDict([
-            (key.replace('_orig_mod.', ''), value) for key, value in state_dict['model'].items()
+            (key.replace('_orig_mod.', ''), value) for key, value in chkpt['model'].items()
         ])
         model.load_state_dict(model_state_dict)
     else:
-        state_dict = torch.load(checkpoint_path, map_location=device)
-        corrected_state_dict = OrderedDict(
-            [(key.replace('_orig_mod.', ''), value) for key, value in state_dict['model'].items()])
-        model.load_state_dict(corrected_state_dict)
+        chkpt = torch.load(checkpoint_path, map_location=device)
+        # Load model state
+        model_state_dict = OrderedDict([
+            (key.replace('_orig_mod.', ''), value) for key, value in chkpt['model'].items()
+        ])
+        model.load_state_dict(model_state_dict)
 
     model.eval().to(device)
 

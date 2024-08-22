@@ -8,7 +8,7 @@ from two_sep_tokenizer import AudioTokenizer
 from scipy.io.wavfile import write
 import torch.distributed.checkpoint as dist_checkpoint
 
-checkpoint_path = './log/model_s71600_vl5.1429.pt'
+checkpoint_path = './log/model.pt'
 shampoo = False
 
 device = "cpu"
@@ -20,29 +20,24 @@ print(f"using device: {device}")
 model = GPT(GPTConfig(block_size=3072))
 
 if shampoo:
-    state_dict = {}
+    chkpt = {}
     dist_checkpoint.load_state_dict(
-        state_dict=state_dict,
+        state_dict=chkpt,
         storage_reader=dist_checkpoint.FileSystemReader(checkpoint_path),
     )
 
     # Load model state
     model_state_dict = OrderedDict([
-        (key.replace('_orig_mod.', ''), value) for key, value in state_dict['model'].items()
+        (key.replace('_orig_mod.', ''), value) for key, value in chkpt['model'].items()
     ])
     model.load_state_dict(model_state_dict)
 else:
-    original_state_dict = torch.load(checkpoint_path, map_location=torch.device('cpu'))
-    # Corrected state dictionary
-    state_dict = {
-        'model': OrderedDict([
-            (key.replace('_orig_mod.', ''), value) for key, value in original_state_dict['model'].items()
-        ]),
-        'config': original_state_dict['config'],
-        'step': original_state_dict['step'],
-        'val_loss': original_state_dict['val_loss']
-    }
-    model.load_state_dict(state_dict['model'])
+    chkpt = torch.load(checkpoint_path, map_location=torch.device('cpu'))
+    # Load model state
+    model_state_dict = OrderedDict([
+        (key.replace('_orig_mod.', ''), value) for key, value in chkpt['model'].items()
+    ])
+    model.load_state_dict(model_state_dict)
 
 model.eval()
 model.to(device)

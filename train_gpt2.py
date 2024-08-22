@@ -55,7 +55,7 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
 if master_process:
-    wandb.init(project="ChirpGPT")
+    wandb.init(project="MusicGPT")
 
 # ------------------------------
 # HYPER-PARAMETERS
@@ -67,13 +67,18 @@ total_batch_size = T*40  # pick something about 32768
 # micro batch size
 B = 8
 
-grok_alpha = 0.925
-grok_lamb = 1.1
+grok_enabled = True
+grok_start_divergence = 1.075
+divergence_window_size = 5
+grok_warmup_steps = 1000
+grok_alpha = 0.75  # 0.925
+grok_lamb = 0.9  # 1.1
+
 weight_decay = 0.113333
 
-# pi is just being silly, ~3.15 was arrived at experimentally
-max_lr = math.pi * 1e-4
-init_lr_pct = 0.075
+# Big music model is ~2.79x larger than Small
+max_lr = 2.825e-4 #1.905e-4 #2.275e-4  #2.785
+init_lr_pct = 0.07
 min_lr_pct = 0.01
 
 loss_by_later_subchunks = False
@@ -87,14 +92,19 @@ num_epochs = 0.33 #3  # Can be fraction
 grad_clip_percentile = 0.0875
 grad_clip_min = 1e-3
 grad_clip_max = 0.85
-norms_window_size = 350
+norms_window_size = 250
 # Decrease lr when norm percentile & loss are increasing
 max_clip_slope = 1.1
 lr_adj_rate = 0.925  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps while conditions met
-warmup_steps = 2600  # was 2200
+warmup_steps = 1800  # was 2200
+save_every = 2500
 
-resume = False
-resume_from = './BIRD_FINAL_32khz_Small_NoTest_model_64432.pt'
+resume = True
+resume_from = './log/model_3600.pt'
+# Whether to reset (or load from checkpoint) the optimizer. Also resets norms&loss windows.
+reset_optimizer = False
+# Whether to reset (or load from checkpoint) the schedule (currently, the step number and best val loss)
+reset_schedule = False
 
 # ------------------------------
 # END HYPER-PARAMETERS
@@ -120,22 +130,39 @@ torch.set_float32_matmul_precision('high')
 
 # create model
 model = GPT(GPTConfig(block_size=T), init_weights=True)
+model.to(device)
+optimizer = model.configure_optimizers(weight_decay=weight_decay, learning_rate=max_lr * init_lr_pct, device_type=device_type, log=False)
 grads = None
+step = 0
+best_val_loss = 999.9
+norms_window = []
+loss_window = []
+divergence_window = []
+grok_start_step = -1
 
 if resume:
-    original_state_dict = torch.load(resume_from, map_location=torch.device('cpu'))
-    # Corrected state dictionary
-    state_dict = {
-        'model': OrderedDict([
-            (key.replace('_orig_mod.', ''), value) for key, value in original_state_dict['model'].items()
-        ]),
-        'config': original_state_dict['config'],
-        'step': original_state_dict['step'],
-        'val_loss': original_state_dict['val_loss']
-    }
-    model.load_state_dict(state_dict['model'])
+    print(f"Resuming from {resume_from}")
+    chkpt = torch.load(resume_from, map_location=torch.device('cpu'))
+    model.load_state_dict(OrderedDict([
+            (key.replace('_orig_mod.', ''), value) for key, value in chkpt['model'].items()
+        ]))
+    if not reset_optimizer:
+        optimizer.load_state_dict(chkpt['optim'])
+        if "norms_window" in chkpt:
+            norms_window = chkpt["norms_window"]
+        if "loss_window" in chkpt:
+            loss_window = chkpt["loss_window"]
+        if "divergence_window" in chkpt:
+            divergence_window = chkpt["divergence_window"]
+        if "grok_start_step" in chkpt:
+            grok_start_step = chkpt["grok_start_step"]
+    if not reset_schedule:
+        if "step" in chkpt:
+            step = chkpt["step"]
+        if "val_loss" in chkpt:
+            best_val_loss = chkpt["val_loss"]
 
-model.to(device)
+
 use_compile = True
 if use_compile:
     model = torch.compile(model)
@@ -161,7 +188,7 @@ def get_lr(it):
 
 def get_clip_value(norms_window, step):
     global max_lr, total_panic, optimizer, optimizer_resets
-    if step < max(norms_window_size, warmup_steps * 2.5):
+    if step < warmup_steps * 0.85 or len(norms_window) < norms_window_size:
         return grad_clip_max
     else:
         clip_value = np.percentile(norms_window, grad_clip_percentile * 100)
@@ -174,7 +201,9 @@ def get_clip_value(norms_window, step):
         l1 = np.mean(loss_window[:third])
         l2 = np.mean(loss_window[third:2*third])
         l3 = np.mean(loss_window[2*third:])
-        if step > warmup_steps * 0.5 and p3 > p2 > p1 and p3 / p2 > max_clip_slope and p2/p1 > max_clip_slope and l3 > l2 > l1:
+        #print(f"p3: {p3}, p2: {p2}, p1: {p1}, l3: {l3}, l2: {l2}, l1: {l1}")
+        #print(f"p3 slope {p3 / p2}, p2 slope {p2 / p1}")
+        if p3 > p2 > p1 and p3 / p2 > max_clip_slope and p2 / p1 > max_clip_slope and l3 > l2 > l1:
             max_lr *= lr_adj_rate ** (3 / norms_window_size)
             total_panic += 1
             if total_panic % (third * 2) == 0:
@@ -211,16 +240,12 @@ def get_loss_likelihood(step):
             return 1.0 - (float(step) / float(max(1, warmup_steps)))
 
 
-best_val_loss = 999.9
-eval_every = 400
-val_loss_steps = 10
-norms_window = []
-loss_window = []
-current_epoch = 0
+eval_every = 50  # Gets changed below
+val_loss_steps = 10  # Gets changed below
+current_epoch = step * total_batch_size // train_loader.total_tokens
 total_panic = 0
 optimizer_resets = 0
 clip_val = get_clip_value([], 0)
-optimizer = raw_model.configure_optimizers(weight_decay=weight_decay, learning_rate=max_lr * init_lr_pct, device_type=device_type, log=master_process)
 
 # create the log directory we will write checkpoints to and log to
 log_dir = "log"
@@ -229,13 +254,13 @@ os.makedirs(log_dir, exist_ok=True)
 #with open(log_file, "w") as f: # open for writing to clear the file
  #   pass
 
-t = tqdm(range(max_steps), f"Training epoch 1 of {num_epochs}")
+t = tqdm(range(step, max_steps), initial=step, desc=f"Training epoch {current_epoch+1} of {num_epochs}", dynamic_ncols=True)
 for step in t:
     t0 = time.time()
     last_step = (step == max_steps - 1)
 
     # once in a while evaluate our validation loss
-    if step > 0 and step % eval_every == 0 or last_step:
+    if step > 0 and (step % eval_every == 0 or step % save_every == 0 or last_step):
         model.eval()
         with torch.no_grad():
             val_loss_accum = 0.0
@@ -283,30 +308,38 @@ for step in t:
             wandb.log({
                 "val/loss": val_loss_accum.item()
             }, step=step)
-            if last_step or (step > warmup_steps and val_loss_accum.item() < best_val_loss):
+            divergence_window.append(val_loss_accum.item() / loss_window[-1])
+            if len(divergence_window) > divergence_window_size:
+                divergence_window.pop(0)
+
+            if step == eval_every or last_step or (step >= warmup_steps and val_loss_accum.item() < best_val_loss):
                 best_val_loss = min(best_val_loss, val_loss_accum.item())
-                if best_val_loss < 5.225:  #4.75:
-                    val_loss_steps = 70
-                    eval_every = 80
-                elif best_val_loss < 5.365:  #4.825:
-                    val_loss_steps = 50
-                    eval_every = 120
+                if best_val_loss < 5.225:  # 4.75 for Chirp, test (low data) Music was 5.225, proper Music <= 5.63
+                    val_loss_steps = 35
+                    eval_every = 50
+                elif best_val_loss < 5.365:  # 4.825 for Chirp, test (low data) Music was 5.365, proper Music 5.72?
+                    val_loss_steps = 20
+                    eval_every = 100
                 else:
                     val_loss_steps = 10
-                    eval_every = 400
-            #if step > 0 and (step % 1600 == 0 or last_step):
-                # optionally write model checkpoints
-                checkpoint_path = os.path.join(log_dir, f"model_s{step:05d}_vl{val_loss_accum.item():.4f}.pt")
-                print(f"writing checkpoint to {checkpoint_path}")
-                checkpoint = {
-                    'model': raw_model.state_dict(),
-                    'config': raw_model.config,
-                    'step': step,
-                    'val_loss': val_loss_accum.item()
-                }
-                # you might also want to add optimizer.state_dict() and
-                # rng seeds etc., if you wanted to more exactly resume training
-                torch.save(checkpoint, checkpoint_path)
+                    eval_every = 200
+                # Don't save on the first step when resuming
+                if not resume or step != chkpt["step"]:
+                    name = f"model_s{step:05d}_vl{val_loss_accum.item():.4f}.pt" if step % save_every == 0 else "model.pt"
+                    checkpoint_path = os.path.join(log_dir, name)
+                    print(f"writing checkpoint to {checkpoint_path}")
+                    checkpoint = {
+                        'model': raw_model.state_dict(),
+                        'config': raw_model.config,
+                        "optim": optimizer.state_dict(),
+                        'step': step,
+                        'val_loss': val_loss_accum.item(),
+                        'norms_window': norms_window,
+                        'loss_window': loss_window,
+                        "divergence_window": divergence_window,
+                        "grok_start_step": grok_start_step
+                    }
+                    torch.save(checkpoint, checkpoint_path)
 
     # do one step of the optimization
     model.train()
@@ -347,9 +380,22 @@ for step in t:
             model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
         loss.backward()
 
-        if step >= (warmup_steps * 0.6667):
-            grads = gradfilter_ema(model, grads=grads, alpha=grok_alpha,
-                                   lamb=grok_lamb * (min(1.0, step / (warmup_steps * 1.5)) ** 3))
+        if grok_enabled and step >= warmup_steps + norms_window_size:
+            if grok_start_step >= 0:
+                warmup_factor = min(1.0, (step - grok_start_step) / grok_warmup_steps) ** 3
+                alpha = grok_alpha * warmup_factor
+                lamb = grok_lamb  # * warmup_factor
+                grads = gradfilter_ema(model, grads=grads, alpha=alpha, lamb=lamb)
+                wandb.log({
+                    "debug/grok_warmup_factor": warmup_factor,
+                    "debug/grok_alpha": alpha,
+                    "debug/grok_lamb": lamb,
+                }, step=step)
+            else:
+                divergence = np.mean(divergence_window)
+                if divergence > grok_start_divergence:
+                    print(f"Starting FastGrok (mean divergence {divergence} > {grok_start_divergence}, the grok_start_divergence; will warm up grok for {grok_warmup_steps} steps).")
+                    grok_start_step = step
 
     if ddp:
         dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)

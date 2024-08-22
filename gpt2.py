@@ -30,9 +30,9 @@ class GPTConfig:
     n_embd: int = 576
 
     # MUSIC
-    n_layer: int = 13
-    n_head: int = 12
-    n_embd: int = 864
+    #n_layer: int = 13
+    #n_head: int = 12
+    #n_embd: int = 864
 
 
 class CausalSelfAttention(nn.Module):
