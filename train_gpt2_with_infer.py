@@ -406,66 +406,67 @@ for step in t:
                         "grok_start_step": grok_start_step
                     }
                     torch.save(checkpoint, checkpoint_path)
-                    try:
-                        print("\nGenerating audio samples...")
-                        torch.cuda.empty_cache()
-                        audio_folder = os.path.join(log_dir, f"model_s{step:05d}_vl{val_loss_accum.item():.4f}")
-                        os.makedirs(audio_folder, exist_ok=True)
+                    if step % save_every == 0:
+                        try:
+                            print("\nGenerating audio samples...")
+                            torch.cuda.empty_cache()
+                            audio_folder = os.path.join(log_dir, f"model_s{step:05d}_vl{val_loss_accum.item():.4f}")
+                            os.makedirs(audio_folder, exist_ok=True)
 
-                        tokenizer = AudioTokenizer(device=device)
+                            tokenizer = AudioTokenizer(device=device)
 
-                        # Get validation data for prefill
-                        x_val, _ = val_loader.next_batch(False)
-                        x_val = x_val[:inference_batch_size].to(device)
+                            # Get validation data for prefill
+                            x_val, _ = val_loader.next_batch(False)
+                            x_val = x_val[:inference_batch_size].to(device)
 
-                        model.eval()
-                        with torch.no_grad():
-                            # 1. Third chunk prediction
-                            try:
-                                print("\n\t3rd chunk...")
-                                prefill = x_val[:, :chunk_size * 2]
-                                chunk3_tokens = generate_tokens(model, chunk_size, inference_batch_size, prefill)
-                                #print(f"Tokens generated: {chunk3_tokens} (len {len(chunk3_tokens[0])}). Saving files.")
-                                print(f"Tokens generated: {len(chunk3_tokens[0])}. Saving files.")
-                                save_audio_files(chunk3_tokens, tokenizer, audio_folder, "chunk3")
-                                del chunk3_tokens
-                            except Exception as e:
-                                print(f"\nError generating audio sample: {e}.")
-                                print(format_exc())
+                            model.eval()
+                            with torch.no_grad():
+                                # 1. Third chunk prediction
+                                try:
+                                    print("\n\t3rd chunk...")
+                                    prefill = x_val[:, :chunk_size * 2]
+                                    chunk3_tokens = generate_tokens(model, chunk_size, inference_batch_size, prefill)
+                                    #print(f"Tokens generated: {chunk3_tokens} (len {len(chunk3_tokens[0])}). Saving files.")
+                                    print(f"Tokens generated: {len(chunk3_tokens[0])}. Saving files.")
+                                    save_audio_files(chunk3_tokens, tokenizer, audio_folder, "chunk3")
+                                    del chunk3_tokens
+                                except Exception as e:
+                                    print(f"\nError generating audio sample: {e}.")
+                                    print(format_exc())
 
-                            # 2. Second and third chunks prediction
-                            try:
-                                print("\n\t2nd&3rd chunk...")
-                                prefill = x_val[:, :chunk_size]
-                                chunk23_tokens = generate_tokens(model, chunk_size * 2, inference_batch_size,
-                                                                 prefill)
-                                #print(f"Tokens generated: {chunk23_tokens} (len {len(chunk23_tokens[0])}). Saving files.")
-                                print(f"Tokens generated: {len(chunk23_tokens[0])}. Saving files.")
-                                save_audio_files(chunk23_tokens, tokenizer, audio_folder, "chunk2and3")
-                                del chunk23_tokens
-                            except Exception as e:
-                                print(f"\nError generating audio sample: {e}.")
-                                print(format_exc())
+                                # 2. Second and third chunks prediction
+                                try:
+                                    print("\n\t2nd&3rd chunk...")
+                                    prefill = x_val[:, :chunk_size]
+                                    chunk23_tokens = generate_tokens(model, chunk_size * 2, inference_batch_size,
+                                                                     prefill)
+                                    #print(f"Tokens generated: {chunk23_tokens} (len {len(chunk23_tokens[0])}). Saving files.")
+                                    print(f"Tokens generated: {len(chunk23_tokens[0])}. Saving files.")
+                                    save_audio_files(chunk23_tokens, tokenizer, audio_folder, "chunk2and3")
+                                    del chunk23_tokens
+                                except Exception as e:
+                                    print(f"\nError generating audio sample: {e}.")
+                                    print(format_exc())
 
-                            # 3. Full sequence
-                            try:
-                                print("\n\tFull sequence...")
-                                full_tokens = generate_tokens(model, T, inference_batch_size)
-                                #print(f"Tokens generated: {full_tokens} (len {len(full_tokens[0])}). Saving files.")
-                                print(f"Tokens generated: {len(full_tokens[0])}. Saving files.")
-                                save_audio_files(full_tokens, tokenizer, audio_folder, "full")
-                                del full_tokens
-                            except Exception as e:
-                                print(f"\nError generating audio sample: {e}.")
-                                print(format_exc())
+                                # 3. Full sequence
+                                try:
+                                    print("\n\tFull sequence...")
+                                    full_tokens = generate_tokens(model, T, inference_batch_size)
+                                    #print(f"Tokens generated: {full_tokens} (len {len(full_tokens[0])}). Saving files.")
+                                    print(f"Tokens generated: {len(full_tokens[0])}. Saving files.")
+                                    save_audio_files(full_tokens, tokenizer, audio_folder, "full")
+                                    del full_tokens
+                                except Exception as e:
+                                    print(f"\nError generating audio sample: {e}.")
+                                    print(format_exc())
 
-                            print("\nDone.")
-                        del tokenizer
-                    except Exception as e:
-                        print(f"\nError generating audio samples: {e}.")
-                        print(format_exc())
-                    finally:
-                        torch.cuda.empty_cache()
+                                print("\nDone.")
+                            del tokenizer
+                        except Exception as e:
+                            print(f"\nError generating audio samples: {e}.")
+                            print(format_exc())
+                        finally:
+                            torch.cuda.empty_cache()
 
     # do one step of the optimization
     model.train()
