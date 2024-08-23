@@ -63,9 +63,9 @@ if master_process:
 
 # sequence length
 T = 3072
-total_batch_size = T*40  # pick something about 32768
+total_batch_size = T*42  # pick something about 32768
 # micro batch size
-B = 8
+B = 3
 
 grok_enabled = True
 grok_start_divergence = 1.075
@@ -77,7 +77,7 @@ grok_lamb = 0.9  # 1.1
 weight_decay = 0.113333
 
 # Big music model is ~2.79x larger than Small
-max_lr = 2.825e-4 #1.905e-4 #2.275e-4  #2.785
+max_lr = 1.73e-4  #2.825e-4
 init_lr_pct = 0.07
 min_lr_pct = 0.01
 
@@ -88,18 +88,18 @@ third_subchunk_predict_percentage = 0.75
 
 # At 170MB tokenized data & next-chunk loss, val starts increasing ~epoch 5-6. With music at least seems start earlier for full sequence loss.
 # Maybe try 3-4 epochs full-sequence then ~2-4(?) next-chunk(s)
-num_epochs = 0.33 #3  # Can be fraction
-grad_clip_percentile = 0.0875
+num_epochs = 3  # Can be fraction
+grad_clip_percentile = 0.09
 grad_clip_min = 1e-3
 grad_clip_max = 0.85
 norms_window_size = 250
 # Decrease lr when norm percentile & loss are increasing
 max_clip_slope = 1.1
 lr_adj_rate = 0.925  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps while conditions met
-warmup_steps = 1800  # was 2200
+warmup_steps = 1800
 save_every = 2500
 
-resume = True
+resume = False
 resume_from = './log/model_3600.pt'
 # Whether to reset (or load from checkpoint) the optimizer. Also resets norms&loss windows.
 reset_optimizer = False
@@ -254,7 +254,7 @@ os.makedirs(log_dir, exist_ok=True)
 #with open(log_file, "w") as f: # open for writing to clear the file
  #   pass
 
-t = tqdm(range(step, max_steps), initial=step, desc=f"Training epoch {current_epoch+1} of {num_epochs}", dynamic_ncols=True)
+t = tqdm(range(step, max_steps), initial=step, total=max_steps, desc=f"Training epoch {current_epoch+1} of {num_epochs}", dynamic_ncols=True)
 for step in t:
     t0 = time.time()
     last_step = (step == max_steps - 1)
@@ -314,10 +314,10 @@ for step in t:
 
             if step == eval_every or last_step or (step >= warmup_steps and val_loss_accum.item() < best_val_loss):
                 best_val_loss = min(best_val_loss, val_loss_accum.item())
-                if best_val_loss < 5.225:  # 4.75 for Chirp, test (low data) Music was 5.225, proper Music <= 5.63
+                if best_val_loss < 5.56:  # 4.75 for Chirp, test (low data) Music was 5.225, proper Music 5.56?
                     val_loss_steps = 35
                     eval_every = 50
-                elif best_val_loss < 5.365:  # 4.825 for Chirp, test (low data) Music was 5.365, proper Music 5.72?
+                elif best_val_loss < 5.73:  # 4.825 for Chirp, test (low data) Music was 5.365, proper Music 5.73?
                     val_loss_steps = 20
                     eval_every = 100
                 else:

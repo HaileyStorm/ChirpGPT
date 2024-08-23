@@ -25,14 +25,14 @@ class GPTConfig:
 
     # SMALL (and a somewhat narrow)
     # max_lr ~ 5e-4????, grad_clip_max ~ 0.6667 (or less)
-    n_layer: int = 10
-    n_head: int = 8
-    n_embd: int = 576
+    #n_layer: int = 10
+    #n_head: int = 8
+    #n_embd: int = 576
 
     # MUSIC
-    #n_layer: int = 13
-    #n_head: int = 12
-    #n_embd: int = 864
+    n_layer: int = 13
+    n_head: int = 12
+    n_embd: int = 864
 
 
 class CausalSelfAttention(nn.Module):
