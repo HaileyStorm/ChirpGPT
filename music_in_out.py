@@ -9,7 +9,7 @@ from gpt2 import GPT, GPTConfig
 from two_sep_tokenizer import AudioTokenizer
 import torch.distributed.checkpoint as dist_checkpoint
 
-checkpoint_path = './log/model.pt'
+checkpoint_path = './log/small_13400.pt'
 shampoo = False
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -138,6 +138,8 @@ def main():
 
     # Decode and save audio
     for i in range(num_return_sequences):
+        print(np.array([output_tokens[i].tolist()]))
+        print(len(output_tokens[i].tolist()))
         audio_out = tokenizer.decode(np.array([output_tokens[i].tolist()]))
         wavfile.write(f'output_{i}.wav', tokenizer.sample_rate, audio_out.cpu().detach().numpy())
 

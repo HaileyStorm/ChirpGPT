@@ -8,7 +8,7 @@ from two_sep_tokenizer import AudioTokenizer
 from scipy.io.wavfile import write
 import torch.distributed.checkpoint as dist_checkpoint
 
-checkpoint_path = './log/model.pt'
+checkpoint_path = './log/small_13400.pt'
 shampoo = False
 
 device = "cpu"
@@ -49,7 +49,7 @@ num_return_sequences = 3
 # 4.5s = 768 tokens
 # 6s = 1024
 # We could reduce this by one and append the final separator token manually.
-max_length = 3072  # 1536
+max_length = 3072
 
 tokens = [seperator]
 tokens = torch.tensor(tokens, dtype=torch.long)
