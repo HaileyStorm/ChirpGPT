@@ -8,7 +8,7 @@ from two_sep_tokenizer import AudioTokenizer
 from scipy.io.wavfile import write
 import torch.distributed.checkpoint as dist_checkpoint
 
-checkpoint_path = './log/small_13400.pt'
+checkpoint_path = './log/model_s07500_vl5.6090.pt'
 shampoo = False
 
 device = "cpu"

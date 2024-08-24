@@ -13,6 +13,7 @@ class DataLoaderLite:
         self.num_processes = num_processes
         self.critical_divisor = critical_divisor
         assert split in {'train', 'val'}
+        self.split = split
         assert T % critical_divisor == 0, f"T ({T}) must be divisible by critical_divisor ({critical_divisor})"
 
         if seed is not None:
@@ -79,11 +80,19 @@ class DataLoaderLite:
         end = start + self.T
         return self.tokens[start:end]
 
-    def next_batch(self, loss_by_later_subchunks):
+    def skip_batches(self, num_batches):
+        print(f"Resume: skipping {num_batches} batches in {self.split} dataloader...")
+        for _ in range(num_batches):
+            self.next_batch(False, skip=True)
+
+    def next_batch(self, loss_by_later_subchunks, skip=False):
         if self.current_batch >= self.num_batches:
             self.current_shard = (self.current_shard + 1) % len(self.shards)
             self.load_and_shuffle_shard()
             self.current_batch = 0
+        if skip:
+            self.current_batch += 1
+            return None
 
         B, T = self.B, self.T
 

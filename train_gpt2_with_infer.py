@@ -91,7 +91,7 @@ third_subchunk_predict_percentage = 0.75
 
 # At 170MB tokenized data & next-chunk loss, val starts increasing ~epoch 5-6. With music at least seems start earlier for full sequence loss.
 # Maybe try 3-4 epochs full-sequence then ~2-4(?) next-chunk(s)
-num_epochs = 3  # Can be fraction
+num_epochs = 2.5  # Can be fraction
 grad_clip_percentile = 0.09
 grad_clip_min = 1e-3
 grad_clip_max = 0.85
@@ -104,7 +104,7 @@ save_every = 2500
 inference_batch_size = 3
 
 resume = True
-resume_from = './log/model_2400.pt'
+resume_from = './log/model_s25000_vl5.2744.pt'
 # Whether to reset (or load from checkpoint) the optimizer. Also resets norms&loss windows.
 reset_optimizer = False
 # Whether to reset (or load from checkpoint) the schedule (currently, the step number and best val loss)
@@ -163,6 +163,9 @@ if resume:
     if not reset_schedule:
         if "step" in chkpt:
             step = chkpt["step"]
+            train_loader.skip_batches(step * grad_accum_steps)
+            # Approximate and not too important
+            val_loader.skip_batches(step * 10)
         if "val_loss" in chkpt:
             best_val_loss = chkpt["val_loss"]
 
@@ -307,7 +310,7 @@ def save_audio_files(tokens, tokenizer, folder, prefix):
 
 
 eval_every = 50  # Gets changed below
-val_loss_steps = 10  # Gets changed below
+val_loss_steps = 25  # Gets changed below
 current_epoch = step * total_batch_size // train_loader.total_tokens
 total_panic = 0
 optimizer_resets = 0
@@ -384,7 +387,7 @@ for step in t:
                     val_loss_steps = 35
                     eval_every = 50
                 elif best_val_loss < 5.73:  # 4.825 for Chirp, test (low data) Music was 5.365, proper Music 5.73?
-                    val_loss_steps = 20
+                    val_loss_steps = 25
                     eval_every = 100
                 else:
                     val_loss_steps = 10
