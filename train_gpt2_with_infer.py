@@ -17,6 +17,7 @@ import random
 from two_sep_tokenizer import AudioTokenizer
 from scipy.io.wavfile import write
 from traceback import format_exc
+from liger_kernel.transformers.cross_entropy import LigerCrossEntropyLoss
 
 # simple launch:
 # python train_gpt2.py
@@ -110,6 +111,8 @@ reset_optimizer = False
 # Whether to reset (or load from checkpoint) the schedule (currently, the step number and best val loss)
 reset_schedule = False
 
+use_compile = True
+
 # ------------------------------
 # END HYPER-PARAMETERS
 # ------------------------------
@@ -136,6 +139,7 @@ torch.set_float32_matmul_precision('high')
 model = GPT(GPTConfig(block_size=T), init_weights=True)
 model.to(device)
 optimizer = model.configure_optimizers(weight_decay=weight_decay, learning_rate=max_lr * init_lr_pct, device_type=device_type, log=False)
+criterion = LigerCrossEntropyLoss()
 grads = None
 step = 0
 best_val_loss = 999.9
@@ -169,8 +173,6 @@ if resume:
         if "val_loss" in chkpt:
             best_val_loss = chkpt["val_loss"]
 
-
-use_compile = True
 if use_compile:
     model = torch.compile(model)
 if ddp:
@@ -364,7 +366,8 @@ for step in t:
                     else:
                         inputs = logits[:, -chunk_size*2:].contiguous().view(-1, logits.size(-1))
                         targets = torch.cat([y, z], dim=1).view(-1)
-                    loss = F.cross_entropy(inputs, targets)
+                    #loss = F.cross_entropy(inputs, targets)
+                    loss = criterion(inputs, targets)
 
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
@@ -501,7 +504,8 @@ for step in t:
             else:
                 inputs = logits[:, -chunk_size * 2:].contiguous().view(-1, logits.size(-1))
                 targets = torch.cat([y, z], dim=1).view(-1)
-            loss = F.cross_entropy(inputs, targets)
+            #loss = F.cross_entropy(inputs, targets)
+            loss = criterion(inputs, targets)
 
         loss_accum += loss.detach() / grad_accum_steps
         loss = loss / grad_accum_steps

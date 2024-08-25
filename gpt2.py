@@ -1,8 +1,11 @@
+from collections import namedtuple
 from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import inspect
+from liger_kernel.transformers.cross_entropy import LigerCrossEntropyLoss
+from liger_kernel.transformers.geglu import LigerGEGLUMLP
 
 
 @dataclass
@@ -10,6 +13,7 @@ class GPTConfig:
     # max sequence length
     block_size: int = 1536
     vocab_size: int = 4160  # 4112
+    use_liger_gelu: bool = False
 
     # WIDE
     # max_lr ~ 2.333e-3, grad_clip_max ~ 0.5
@@ -70,16 +74,28 @@ class MLP(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd)
-        self.gelu    = nn.GELU(approximate='tanh')
-        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd)
-        self.c_proj.NANOGPT_SCALE_INIT = 1
+        self.use_liger_gelu = config.use_liger_gelu
+        if config.use_liger_gelu:
+            GeluConfig = namedtuple("GeluConfig", ["hidden_size", "intermediate_size", "hidden_act"])
+            self.liger_mlp = LigerGEGLUMLP(GeluConfig(
+                hidden_size=config.n_embd,
+                intermediate_size=4 * config.n_embd,
+                hidden_act="gelu_pytorch_tanh"
+            ))
+        else:
+            self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd)
+            self.gelu    = nn.GELU(approximate='tanh')
+            self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd)
+            self.c_proj.NANOGPT_SCALE_INIT = 1
 
     def forward(self, x):
-        x = self.c_fc(x)
-        x = self.gelu(x)
-        x = self.c_proj(x)
-        return x
+        if self.use_liger_gelu:
+            return self.liger_mlp(x)
+        else:
+            x = self.c_fc(x)
+            x = self.gelu(x)
+            x = self.c_proj(x)
+            return x
 
 
 class Block(nn.Module):
@@ -116,6 +132,8 @@ class GPT(nn.Module):
         # init params
         if init_weights:
             self.apply(self._init_weights)
+
+        self.criterion = LigerCrossEntropyLoss()
 
         # Log the model size
         param_dict = {pn: p for pn, p in self.named_parameters()}
@@ -157,7 +175,8 @@ class GPT(nn.Module):
         logits = self.lm_head(x) # (B, T, vocab_size)
         loss = None
         if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+            #loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+            loss = self.criterion(logits.view(-1, logits.size(-1)), targets.view(-1))
         return logits, loss
 
     @classmethod
