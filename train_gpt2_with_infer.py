@@ -105,7 +105,7 @@ save_every = 2500
 inference_batch_size = 3
 
 resume = True
-resume_from = './log/model_s25000_vl5.2744.pt'
+resume_from = './log/model_s77500_vl4.9423.pt'
 # Whether to reset (or load from checkpoint) the optimizer. Also resets norms&loss windows.
 reset_optimizer = False
 # Whether to reset (or load from checkpoint) the schedule (currently, the step number and best val loss)
@@ -421,20 +421,20 @@ for step in t:
 
                             tokenizer = AudioTokenizer(device=device)
 
-                            # Get validation data for prefill
-                            x_val, _ = val_loader.next_batch(False)
-                            x_val = x_val[:inference_batch_size].to(device)
-
                             model.eval()
                             with torch.no_grad():
                                 # 1. Third chunk prediction
                                 try:
                                     print("\n\t3rd chunk...")
-                                    prefill = x_val[:, :chunk_size * 2]
+                                    # Get validation data for prefill
+                                    x_val, _ = val_loader.next_batch(False)
+                                    prefill = x_val[:inference_batch_size][:, :chunk_size * 2].to(device)
                                     chunk3_tokens = generate_tokens(model, chunk_size, inference_batch_size, prefill)
                                     #print(f"Tokens generated: {chunk3_tokens} (len {len(chunk3_tokens[0])}). Saving files.")
                                     print(f"Tokens generated: {len(chunk3_tokens[0])}. Saving files.")
                                     save_audio_files(chunk3_tokens, tokenizer, audio_folder, "chunk3")
+                                    del prefill
+                                    del x_val
                                     del chunk3_tokens
                                 except Exception as e:
                                     print(f"\nError generating audio sample: {e}.")
@@ -443,12 +443,15 @@ for step in t:
                                 # 2. Second and third chunks prediction
                                 try:
                                     print("\n\t2nd&3rd chunk...")
-                                    prefill = x_val[:, :chunk_size]
+                                    x_val, _ = val_loader.next_batch(False)
+                                    prefill = x_val[-inference_batch_size:][:, :chunk_size].to(device)
                                     chunk23_tokens = generate_tokens(model, chunk_size * 2, inference_batch_size,
                                                                      prefill)
-                                    #print(f"Tokens generated: {chunk23_tokens} (len {len(chunk23_tokens[0])}). Saving files.")
+                                    # print(f"Tokens generated: {chunk23_tokens} (len {len(chunk23_tokens[0])}). Saving files.")
                                     print(f"Tokens generated: {len(chunk23_tokens[0])}. Saving files.")
                                     save_audio_files(chunk23_tokens, tokenizer, audio_folder, "chunk2and3")
+                                    del prefill
+                                    del x_val
                                     del chunk23_tokens
                                 except Exception as e:
                                     print(f"\nError generating audio sample: {e}.")
@@ -458,7 +461,7 @@ for step in t:
                                 try:
                                     print("\n\tFull sequence...")
                                     full_tokens = generate_tokens(model, T, inference_batch_size)
-                                    #print(f"Tokens generated: {full_tokens} (len {len(full_tokens[0])}). Saving files.")
+                                    # print(f"Tokens generated: {full_tokens} (len {len(full_tokens[0])}). Saving files.")
                                     print(f"Tokens generated: {len(full_tokens[0])}. Saving files.")
                                     save_audio_files(full_tokens, tokenizer, audio_folder, "full")
                                     del full_tokens

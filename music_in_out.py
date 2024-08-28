@@ -9,7 +9,7 @@ from gpt2 import GPT, GPTConfig
 from two_sep_tokenizer import AudioTokenizer
 import torch.distributed.checkpoint as dist_checkpoint
 
-checkpoint_path = './log/small_13400.pt'
+checkpoint_path = './log/model_s65000_vl5.0147.pt'
 shampoo = False
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -123,9 +123,12 @@ def main():
     tokenizer = AudioTokenizer(device=device)
 
     # Load and prepare audio
-    audio_path = "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/01. Dua lipa - Training Season.mp3"  # Replace with your audio file path
-    start_time = 10  # Seconds
-    input_length = 12  # Seconds
+    audio_path = \
+        "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/03. Benson boone - Beautiful Things.mp3"
+        #"/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/02. David guetta & Onerepublic - I Don't Wanna Wait.mp3"
+        #"/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/01. Dua lipa - Training Season.mp3"
+    start_time = 46  # Seconds
+    input_length = 6  # Seconds
     assert input_length == 6 or input_length == 12
     waveform = load_and_prepare_audio(audio_path, start_time, input_length, tokenizer)
 
