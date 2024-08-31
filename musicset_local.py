@@ -8,15 +8,15 @@ import json
 from two_sep_tokenizer import AudioTokenizer
 
 # Constants
-INPUT_DIR = '/media/hailey/TVBox/music_dl'
-DATA_DIR = '/media/hailey/More/AI/gpt2audio/music_data'
-PREFIX = 'music'
+INPUT_DIR = './RAW_Classical'
+DATA_DIR = './classical_data'
+PREFIX = 'classical'
 SHARD_SIZE = 15 * 1024 * 1024  # 15MB in bytes
 CHUNK_LENGTH = 18  # seconds
 SUB_CHUNK_LENGTH = 6  # seconds
 # The bigger this is, the more empty data will be tokenized (each file is padded to be divisible by this)
 # With current main dataset, 10 = 36 hours to tokenize (1 = something like 12 days iirc)
-SECONDS_PER_STEP = 7  # seconds
+SECONDS_PER_STEP = 3 #7  # seconds
 BATCH_SIZE = 3
 
 assert SECONDS_PER_STEP <= CHUNK_LENGTH
@@ -41,8 +41,8 @@ def load_shuffle_state():
     if os.path.exists(state_file):
         with open(state_file, 'r') as f:
             state = json.load(f)
-        return state['shuffled_files'], state['processed_count']
-    return None, None
+        return set(state['shuffled_files']), state['processed_count']
+    return set(), 0
 
 
 def pad_audio(waveform, sample_rate):
@@ -137,28 +137,34 @@ def main():
     current_train_shard = []
     current_val_shard = []
 
-    shuffled_files, processed_count = load_shuffle_state()
-    if shuffled_files is None:
-        print("Finding files...")
-        audio_files = []
-        for root, dirs, files in os.walk(INPUT_DIR):
-            for file in files:
-                if file.lower().endswith(('.wav', '.mp3', '.flac', '.ogg')):
-                    audio_files.append(os.path.join(root, file))
-        print(f"Found {len(audio_files)} files.\n")
-        shuffle(audio_files)
-        processed_count = 0
+    existing_files, processed_count = load_shuffle_state()
+    print("Finding files...")
+    audio_files = []
+    for root, dirs, files in os.walk(INPUT_DIR):
+        for file in files:
+            if file.lower().endswith(('.wav', '.mp3', '.flac', '.ogg')):
+                full_path = os.path.join(root, file)
+                audio_files.append(full_path)
+
+    new_files = [f for f in audio_files if f not in existing_files]
+    if new_files:
+        print(f"Found {len(new_files)} new files.")
+        shuffle(new_files)
+        audio_files = list(existing_files) + new_files
     else:
-        audio_files = shuffled_files
+        audio_files = list(existing_files)
+
+    print(f"Total files: {len(audio_files)}.")
+    if processed_count > 0:
         print(f"Resuming from file {processed_count} of {len(audio_files)}\n")
+    else:
+        shuffle(audio_files)
 
     total_chunks = 0
     bar = tqdm(range(processed_count, len(audio_files), BATCH_SIZE), initial=processed_count // BATCH_SIZE,
                total=len(audio_files) // BATCH_SIZE, desc="Processing audio files", dynamic_ncols=True, unit="batch")
     try:
         for i in bar:
-            if total_chunks == 0:
-                print(f"{i} - Make sure i is == processed_count on resume, not tqdm's initial. DELETE ME.")
             batch_files = audio_files[i:i + BATCH_SIZE]
             waveforms = []
             sample_rates = []
