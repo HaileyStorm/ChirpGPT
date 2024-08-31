@@ -248,8 +248,17 @@ def get_loss_likelihood(step):
         else:
             return 1.0 - (float(step) / float(max(1, warmup_steps)))
 
+def get_top_k(step, top_k_max, top_k_min, top_k_warmup):
+    if step < top_k_warmup:
+        progress = step / top_k_warmup
+        # Use a sigmoid function for a gradual start and more rapid finish
+        sigmoid_progress = 1 / (1 + math.exp(-10 * (progress - 0.5)))
+        return int(top_k_max - sigmoid_progress * (top_k_max - top_k_min))
+    else:
+        return top_k_min
 
-def generate_tokens(model, seq_length, batch_size, prefill=None, temperature=0.95, top_k=650):
+
+def generate_tokens(model, seq_length, batch_size, prefill=None, temperature=0.96, top_k=360, top_k_max=712, top_k_min=360, top_k_warmup=408):
     if prefill is None:
         tokens = [4097]
         tokens = torch.tensor(tokens, dtype=torch.long)
@@ -260,6 +269,9 @@ def generate_tokens(model, seq_length, batch_size, prefill=None, temperature=0.9
 
     with torch.no_grad():
         for _ in tqdm(range(T - x.size(1) + 1), dynamic_ncols=True, desc="Generating tokens", position=1, leave=False):
+            if prefill is None:
+                current_step = min(x.size(1) - 1, top_k_warmup)
+                top_k = get_top_k(current_step, top_k_max, top_k_min, top_k_warmup)
             logits, _ = model(x)
             next_token_logits = logits[:, -1, :]
 

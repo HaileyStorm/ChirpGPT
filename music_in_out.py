@@ -9,8 +9,21 @@ from gpt2 import GPT, GPTConfig
 from two_sep_tokenizer import AudioTokenizer
 import torch.distributed.checkpoint as dist_checkpoint
 
-checkpoint_path = './log/model_s65000_vl5.0147.pt'
+checkpoint_path = './log/model_s110500_vl4.90655.pt'
 shampoo = False
+
+audio_paths = [
+    "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/03. Benson boone - Beautiful Things.mp3",
+    "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/02. David guetta & Onerepublic - I Don't Wanna Wait.mp3",
+    "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/01. Dua lipa - Training Season.mp3",
+    ]
+start_time = 46  # Seconds
+input_length = 6  # Seconds
+assert input_length == 6 or input_length == 12
+batch_size = 3
+num_batches = 3
+temperature = 0.96
+top_k = 360
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 SUB_CHUNK_LENGTH = 6
@@ -45,8 +58,8 @@ def tokenize_input(waveform, tokenizer):
     return tokens
 
 
-def generate_audio(model, input_tokens, num_return_sequences=1, max_new_tokens=1024, temperature=0.9,
-                   top_k=650):
+def generate_audio(model, input_tokens, num_return_sequences=1, max_new_tokens=1024, temperature=0.96,
+                   top_k=360):
     input_tokens = input_tokens.unsqueeze(0).repeat(num_return_sequences, 1).to(device)
 
     with torch.no_grad():
@@ -122,29 +135,22 @@ def main():
     # Initialize tokenizer
     tokenizer = AudioTokenizer(device=device)
 
-    # Load and prepare audio
-    audio_path = \
-        "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/03. Benson boone - Beautiful Things.mp3"
-        #"/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/02. David guetta & Onerepublic - I Don't Wanna Wait.mp3"
-        #"/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/01. Dua lipa - Training Season.mp3"
-    start_time = 46  # Seconds
-    input_length = 6  # Seconds
-    assert input_length == 6 or input_length == 12
-    waveform = load_and_prepare_audio(audio_path, start_time, input_length, tokenizer)
+    for b in range(num_batches):
+        # Load and prepare audio
+        waveform = load_and_prepare_audio(audio_paths[b % len(audio_paths)], start_time, input_length, tokenizer)
 
-    # Tokenize input
-    input_tokens = tokenize_input(waveform, tokenizer)
+        # Tokenize input
+        input_tokens = tokenize_input(waveform, tokenizer)
 
-    # Generate audio
-    num_return_sequences = 3
-    output_tokens = generate_audio(model, input_tokens, num_return_sequences, max_new_tokens=2048 if input_length == 6 else 1024)
+        # Generate audio
+        output_tokens = generate_audio(model, input_tokens, batch_size, max_new_tokens=2048 if input_length == 6 else 1024, temperature=temperature, top_k=top_k)
 
-    # Decode and save audio
-    for i in range(num_return_sequences):
-        print(np.array([output_tokens[i].tolist()]))
-        print(len(output_tokens[i].tolist()))
-        audio_out = tokenizer.decode(np.array([output_tokens[i].tolist()]))
-        wavfile.write(f'output_{i}.wav', tokenizer.sample_rate, audio_out.cpu().detach().numpy())
+        # Decode and save audio
+        for i in range(batch_size):
+            print(np.array([output_tokens[i].tolist()]))
+            print(len(output_tokens[i].tolist()))
+            audio_out = tokenizer.decode(np.array([output_tokens[i].tolist()]))
+            wavfile.write(f'./log/final/{"chunk2and3" if input_length == 6 else "chunk3"}_{i}.wav', tokenizer.sample_rate, audio_out.cpu().detach().numpy())
 
 
 if __name__ == "__main__":
