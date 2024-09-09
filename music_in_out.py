@@ -13,9 +13,9 @@ checkpoint_path = './log/model_s110500_vl4.90655.pt'
 shampoo = False
 
 audio_paths = [
-    "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/03. Benson boone - Beautiful Things.mp3",
-    "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/02. David guetta & Onerepublic - I Don't Wanna Wait.mp3",
-    "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/01. Dua lipa - Training Season.mp3",
+    "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/.unwanted/03. Benson boone - Beautiful Things.mp3",
+    "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/.unwanted/02. David guetta & Onerepublic - I Don't Wanna Wait.mp3",
+    "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/.unwanted/01. Dua lipa - Training Season.mp3",
     ]
 start_time = 46  # Seconds
 input_length = 6  # Seconds

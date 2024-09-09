@@ -11,7 +11,7 @@ print(f"Using device: {device}")
 tokenizer = AudioTokenizer(device=device)
 
 # Load a small clip from the audio file
-audio_path = "./tiny-sherlock-audio/adventuresholmes_01_doyle_64kb.mp3"
+audio_path = "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/.unwanted/03. Benson boone - Beautiful Things.mp3"
 waveform, sample_rate = torchaudio.load(audio_path, num_frames=10 * tokenizer.sample_rate)  # Load 10 seconds
 
 # Resample to 32kHz if necessary

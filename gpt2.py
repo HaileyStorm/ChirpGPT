@@ -34,6 +34,7 @@ class GPTConfig:
     #n_embd: int = 576
 
     # MUSIC
+    # max_lr = 1.73e-4
     n_layer: int = 13
     n_head: int = 12
     n_embd: int = 864

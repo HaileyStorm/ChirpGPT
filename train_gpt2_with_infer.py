@@ -59,7 +59,7 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
 if master_process:
-    wandb.init(project="MusicGPT")
+    wandb.init(project="MusicGPT-Classical")
 
 # ------------------------------
 # HYPER-PARAMETERS
@@ -71,8 +71,8 @@ total_batch_size = T*42  # pick something about 32768
 # micro batch size
 B = 3
 
-grok_enabled = True
-grok_start_divergence = 1.075
+grok_enabled = False
+grok_start_divergence = 1.035
 divergence_window_size = 5
 grok_warmup_steps = 1000
 grok_alpha = 0.75  # 0.925
@@ -81,8 +81,8 @@ grok_lamb = 0.9  # 1.1
 weight_decay = 0.113333
 
 # Big music model is ~2.79x larger than Small
-max_lr = 1.73e-4  #2.825e-4
-init_lr_pct = 0.07
+max_lr = 7.5e-5  # 1.73e-4
+init_lr_pct = 0.025  #0.07
 min_lr_pct = 0.01
 
 loss_by_later_subchunks = False
@@ -92,7 +92,7 @@ third_subchunk_predict_percentage = 0.75
 
 # At 170MB tokenized data & next-chunk loss, val starts increasing ~epoch 5-6. With music at least seems start earlier for full sequence loss.
 # Maybe try 3-4 epochs full-sequence then ~2-4(?) next-chunk(s)
-num_epochs = 2.5  # Can be fraction
+num_epochs = 2  # Can be fraction
 grad_clip_percentile = 0.09
 grad_clip_min = 1e-3
 grad_clip_max = 0.85
@@ -100,14 +100,14 @@ norms_window_size = 250
 # Decrease lr when norm percentile & loss are increasing
 max_clip_slope = 1.1
 lr_adj_rate = 0.925  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps while conditions met
-warmup_steps = 1800
+warmup_steps = 2500  #1800
 save_every = 2500
 inference_batch_size = 3
 
 resume = True
-resume_from = './log/model_s77500_vl4.9423.pt'
+resume_from = './log_classical/model_s20000_vl5.0279.pt'
 # Whether to reset (or load from checkpoint) the optimizer. Also resets norms&loss windows.
-reset_optimizer = False
+reset_optimizer = True
 # Whether to reset (or load from checkpoint) the schedule (currently, the step number and best val loss)
 reset_schedule = False
 
@@ -310,14 +310,23 @@ def generate_tokens(model, seq_length, batch_size, prefill=None, temperature=0.9
     return output_tokens
 
 
-def save_audio_files(tokens, tokenizer, folder, prefix):
-    for i in tqdm(range(len(tokens)), dynamic_ncols=True, desc="Decoding audio and saving files", position=0, leave=True):
-        audio = tokenizer.decode(np.array([tokens[i]]))
+def save_audio_files(prefill_tokens, sample_tokens, tokenizer, folder, prefix):
+    if prefill_tokens is not None:
+        separators = torch.tensor([4097], dtype=torch.long, device=device).unsqueeze(0).repeat(len(sample_tokens), 1)
+        prefill_tokens = torch.cat([prefill_tokens, separators], dim=1)
+    for i in tqdm(range(len(sample_tokens)), dynamic_ncols=True, desc="Decoding audio and saving files", position=0, leave=True):
+        audio = tokenizer.decode(np.array([sample_tokens[i]]))
         audio_np = audio.cpu().detach().numpy()
         # Normalize to [-1, 1] range
         audio_np = audio_np / np.max(np.abs(audio_np))
         # Convert to 16-bit PCM
         audio_16bit = (audio_np * 32767).astype(np.int16)
+        if prefill_tokens is not None:
+            prefill_audio = tokenizer.decode(np.array([prefill_tokens[i].tolist()]))
+            prefill_np = prefill_audio.cpu().detach().numpy()
+            prefill_np = prefill_np / np.max(np.abs(prefill_np))
+            prefill_16bit = (prefill_np * 32767).astype(np.int16)
+            audio_16bit = np.append(prefill_16bit, audio_16bit)
         filename = os.path.join(folder, f"{prefix}_{i}.mp3")
         write(filename, tokenizer.sample_rate, audio_16bit)
     del audio
@@ -331,7 +340,7 @@ optimizer_resets = 0
 clip_val = get_clip_value([], 0)
 
 # create the log directory we will write checkpoints to and log to
-log_dir = "log"
+log_dir = "log_classical"
 os.makedirs(log_dir, exist_ok=True)
 #log_file = os.path.join(log_dir, f"log.txt")
 #with open(log_file, "w") as f: # open for writing to clear the file
@@ -392,20 +401,21 @@ for step in t:
             wandb.log({
                 "val/loss": val_loss_accum.item()
             }, step=step)
-            divergence_window.append(val_loss_accum.item() / loss_window[-1])
+            if len(loss_window) > 0:
+                divergence_window.append(val_loss_accum.item() / loss_window[-1])
             if len(divergence_window) > divergence_window_size:
                 divergence_window.pop(0)
 
             if step == eval_every or last_step or step % save_every == 0 or (step >= warmup_steps and val_loss_accum.item() < best_val_loss):
                 best_val_loss = min(best_val_loss, val_loss_accum.item())
-                if best_val_loss < 5.56:  # 4.75 for Chirp, test (low data) Music was 5.225, proper Music 5.56?
+                if best_val_loss < 4.99:  # 4.75 for Chirp
                     val_loss_steps = 35
                     eval_every = 50
-                elif best_val_loss < 5.73:  # 4.825 for Chirp, test (low data) Music was 5.365, proper Music 5.73?
+                elif best_val_loss < 5.09:  # 4.825 for Chirp
                     val_loss_steps = 25
                     eval_every = 100
                 else:
-                    val_loss_steps = 10
+                    val_loss_steps = 12
                     eval_every = 200
                 # Don't save on the first step when resuming
                 if not resume or step != chkpt["step"]:
@@ -444,7 +454,7 @@ for step in t:
                                     chunk3_tokens = generate_tokens(model, chunk_size, inference_batch_size, prefill)
                                     #print(f"Tokens generated: {chunk3_tokens} (len {len(chunk3_tokens[0])}). Saving files.")
                                     print(f"Tokens generated: {len(chunk3_tokens[0])}. Saving files.")
-                                    save_audio_files(chunk3_tokens, tokenizer, audio_folder, "chunk3")
+                                    save_audio_files(prefill, chunk3_tokens, tokenizer, audio_folder, "12sPrefill+6sSample")
                                     del prefill
                                     del x_val
                                     del chunk3_tokens
@@ -461,7 +471,7 @@ for step in t:
                                                                      prefill)
                                     # print(f"Tokens generated: {chunk23_tokens} (len {len(chunk23_tokens[0])}). Saving files.")
                                     print(f"Tokens generated: {len(chunk23_tokens[0])}. Saving files.")
-                                    save_audio_files(chunk23_tokens, tokenizer, audio_folder, "chunk2and3")
+                                    save_audio_files(prefill, chunk23_tokens, tokenizer, audio_folder, "6sPrefill+12sSample")
                                     del prefill
                                     del x_val
                                     del chunk23_tokens
@@ -475,7 +485,7 @@ for step in t:
                                     full_tokens = generate_tokens(model, T, inference_batch_size)
                                     # print(f"Tokens generated: {full_tokens} (len {len(full_tokens[0])}). Saving files.")
                                     print(f"Tokens generated: {len(full_tokens[0])}. Saving files.")
-                                    save_audio_files(full_tokens, tokenizer, audio_folder, "full")
+                                    save_audio_files(None, full_tokens, tokenizer, audio_folder, "full")
                                     del full_tokens
                                 except Exception as e:
                                     print(f"\nError generating audio sample: {e}.")
@@ -529,7 +539,7 @@ for step in t:
             model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
         loss.backward()
 
-        if grok_enabled and step >= warmup_steps + norms_window_size:
+        if grok_enabled and step >= warmup_steps * 2:
             if grok_start_step >= 0:
                 warmup_factor = min(1.0, (step - grok_start_step) / grok_warmup_steps) ** 3
                 alpha = grok_alpha * warmup_factor

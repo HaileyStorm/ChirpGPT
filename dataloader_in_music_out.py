@@ -14,7 +14,7 @@ checkpoint_path = './log/model_s110500_vl4.90655.pt'
 shampoo = False
 
 batch_size = 3
-input_length = 6  # 12 for chunk3, 6 for chunk2+chunk3
+input_length = 12  # 12 for chunk3, 6 for chunk2+chunk3
 num_batches = 25
 temperature = 0.96
 top_k = 360
@@ -124,14 +124,11 @@ def main():
 
         # Save samples and prefill
         for i in range(batch_size):
-            sample_name = f'./log/final/chunk2and3/b{b}_s{i}_sample.wav'
-            prefill_name = f'./log/final/chunk2and3/b{b}_s{i}_prefill.wav'
-
+            sample_name = f'./log/final/chunk3_classical/12sPrefill+6sSample_b{b}_s{i}.wav'
             prefill_audio = tokenizer.decode(np.array([prefill[i].tolist()]))
-            wavfile.write(prefill_name, tokenizer.sample_rate, prefill_audio.cpu().detach().numpy())
-
             sample_audio = tokenizer.decode(np.array([output_tokens[i].tolist()]))
-            wavfile.write(sample_name, tokenizer.sample_rate, sample_audio.cpu().detach().numpy())
+            save_audio = np.append(prefill_audio.cpu().detach().numpy(), sample_audio.cpu().detach().numpy())
+            wavfile.write(sample_name, tokenizer.sample_rate, save_audio)
 
 
 if __name__ == "__main__":

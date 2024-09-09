@@ -3,12 +3,50 @@ from snac import SNAC
 import numpy as np
 
 
-class AudioTokenizer():
+class AudioTokenizer:
+    """
+       A class for tokenizing and detokenizing audio data using the SNAC model.
+
+       This tokenizer converts audio waveforms into a flattened, hierarchical representation
+       and vice versa. It uses a pre-trained SNAC model to encode audio into multiple tensors
+       of varying granularity, which are then flattened into a single sequence of integers.
+
+       Input Structure:
+           - A list of audio waveforms (torch tensors) with a sample rate of 32kHz.
+
+       Output Structure (for 32kHz/4 tensor model):
+           A flattened sequence of integers with the following structure:
+           [4097, A1, B1, C1, D1, D2, C2, D3, D4, B2, C3, D5, D6, C4, D7, D8, 4098, A2, ...]
+
+           Where:
+           - 4097 is the initial separator (appears once at the start)
+           - 4098 is the layer separator (appears between groups)
+           - A, B, C, and D represent values from the four SNAC tensors respectively
+           - Each group of 15 elements (A, B1, C1, D1, D2, C2, D3, D4, B2, C3, D5, D6, C4, D7, D8)
+             represents a hierarchical encoding of a segment of audio
+
+       The flattened structure preserves the hierarchical relationship between the tensors:
+       - A single value from the first (coarsest) tensor
+       - Two values from the second tensor
+       - For each value from the second tensor:
+           - Two values from the third tensor
+           - For each value from the third tensor:
+               - Two values from the fourth (finest) tensor
+
+       This structure allows for efficient encoding and decoding of audio data while
+       maintaining the multi-scale representation provided by the SNAC model.
+
+       Methods:
+           encode: Converts audio waveforms to the flattened token representation.
+           decode: Reconstructs audio waveforms from the flattened token representation.
+       """
+
     def __init__(self, device = 'cpu') -> None:
         self.model = torch.compile(SNAC.from_pretrained("hubertsiuzdak/snac_32khz").eval().to(device))
         self.sample_rate = 32000
         self.device = device
         self.separator = 4097
+        # Aka timestep separator or code separator
         self.layer_separator = 4098
 
     def flatten_tensors(self, tensors):
@@ -92,6 +130,7 @@ class AudioTokenizer():
 
         n_elements = count_elements_between_hashes(flattened_output)
         #print("n_elements:", n_elements)
+        # 24khz
         if n_elements == 7:
             for i in range(0, len(flattened_output), 8):
 
@@ -109,6 +148,7 @@ class AudioTokenizer():
                     list_to_torch_tensor(tensor3),
                 ]
 
+        #32khz
         if n_elements == 15:
             for i in range(0, len(flattened_output), 16):
                 #print(f"{len(flattened_output)} vs {i}")
@@ -138,19 +178,20 @@ class AudioTokenizer():
 
         return codes
 
-    # expects list of waveforms formatted in 24khz)
+    # expects list of waveforms formatted in 32khz mono (or 24khz if reconfigured/SNAC model changed)
     def encode(self, waves):
 
         audio = torch.stack(waves).to(self.device)
 
         with torch.inference_mode():
+            # Each  code is a time step, e.g. if 6 seconds audio is passed in using 32khz model you'll get 64 codes each representing ~93.75ms (3000 samples) of audio
             codes = self.model.encode(audio)
         #print(f"encode model output (`codes`) shape: {[code.shape for code in codes]}")
             
-        #print("Number of tensors:", len(codes))
+        print("Number of tensors:", len(codes))
         #mx = 0
-        #for i, code in enumerate(codes):
-        #    print(f"Tensor {i} shape:", code.shape)
+        for i, code in enumerate(codes):
+            print(f"\tTensor {i} shape: {code.shape}, min: {torch.min(code)}, max: {torch.max(code)}")
         #    mx = max(torch.max(code), mx)
         #print(f"Max value: {mx}")
         

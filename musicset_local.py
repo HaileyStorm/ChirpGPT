@@ -8,15 +8,15 @@ import json
 from two_sep_tokenizer import AudioTokenizer
 
 # Constants
-INPUT_DIR = './RAW_Classical'
-DATA_DIR = './classical_data'
-PREFIX = 'classical'
+INPUT_DIR = '/media/hailey/TVBox/Essential Mix Collection 1993-2021 (MP3)'
+DATA_DIR = './edm_big18step_data'
+PREFIX = 'edm_big'
 SHARD_SIZE = 15 * 1024 * 1024  # 15MB in bytes
 CHUNK_LENGTH = 18  # seconds
 SUB_CHUNK_LENGTH = 6  # seconds
 # The bigger this is, the more empty data will be tokenized (each file is padded to be divisible by this)
 # With current main dataset, 10 = 36 hours to tokenize (1 = something like 12 days iirc)
-SECONDS_PER_STEP = 3 #7  # seconds
+SECONDS_PER_STEP = 18 #7  # seconds
 BATCH_SIZE = 3
 
 assert SECONDS_PER_STEP <= CHUNK_LENGTH
