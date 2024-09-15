@@ -10,20 +10,22 @@ from dataloader import DataLoaderLite
 import torch.distributed.checkpoint as dist_checkpoint
 import random
 
-checkpoint_path = './log/model_s110500_vl4.90655.pt'
+checkpoint_path = './log_edm/model_s50000_vl4.1830.pt'
 shampoo = False
 
-batch_size = 3
-input_length = 12  # 12 for chunk3, 6 for chunk2+chunk3
-num_batches = 25
+batch_size = 2 #3
+prefill_chunks = 2
+num_batches = 15
 temperature = 0.96
 top_k = 360
+
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 SUB_CHUNK_LENGTH = 6
 B = batch_size
 T = 3072
 chunk_size = 1024
+input_length = prefill_chunks * SUB_CHUNK_LENGTH
 
 
 def generate_audio(model, input_tokens, max_new_tokens=1024, temperature=0.96,
@@ -119,12 +121,12 @@ def main():
         prefill = torch.cat([prefill, separators], dim=1)
 
         # Generate samples
-        output_tokens = generate_audio(model, prefill, max_new_tokens=2048 if input_length == 6 else 1024,
+        output_tokens = generate_audio(model, prefill, max_new_tokens=int(T - (chunk_size * (input_length // SUB_CHUNK_LENGTH))),
                                        temperature=temperature, top_k=top_k)
 
         # Save samples and prefill
         for i in range(batch_size):
-            sample_name = f'./log/final/chunk3_classical/12sPrefill+6sSample_b{b}_s{i}.wav'
+            sample_name = f'./log_edm/50k/chunk3/{input_length}sPrefill+{int(((T//chunk_size)*SUB_CHUNK_LENGTH) - input_length)}sSample_b{b}_s{i}.wav'
             prefill_audio = tokenizer.decode(np.array([prefill[i].tolist()]))
             sample_audio = tokenizer.decode(np.array([output_tokens[i].tolist()]))
             save_audio = np.append(prefill_audio.cpu().detach().numpy(), sample_audio.cpu().detach().numpy())

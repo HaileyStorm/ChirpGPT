@@ -188,10 +188,10 @@ class AudioTokenizer:
             codes = self.model.encode(audio)
         #print(f"encode model output (`codes`) shape: {[code.shape for code in codes]}")
             
-        print("Number of tensors:", len(codes))
+        #print("Number of tensors:", len(codes))
         #mx = 0
-        for i, code in enumerate(codes):
-            print(f"\tTensor {i} shape: {code.shape}, min: {torch.min(code)}, max: {torch.max(code)}")
+        #for i, code in enumerate(codes):
+        #    print(f"\tTensor {i} shape: {code.shape}, min: {torch.min(code)}, max: {torch.max(code)}")
         #    mx = max(torch.max(code), mx)
         #print(f"Max value: {mx}")
         

@@ -8,15 +8,19 @@ import json
 from two_sep_tokenizer import AudioTokenizer
 
 # Constants
-INPUT_DIR = '/media/hailey/TVBox/Essential Mix Collection 1993-2021 (MP3)'
-DATA_DIR = './edm_big18step_data'
-PREFIX = 'edm_big'
+INPUT_DIR = '/media/hailey/TVBox/music_dl'
+# Only include songs in folders which contain this word (case-insensitive)
+# Set to None to include all songs
+GENRE_KEYWORD = "pop"
+DATA_DIR = './pop_data'
+PREFIX = 'pop'
 SHARD_SIZE = 15 * 1024 * 1024  # 15MB in bytes
 CHUNK_LENGTH = 18  # seconds
 SUB_CHUNK_LENGTH = 6  # seconds
 # The bigger this is, the more empty data will be tokenized (each file is padded to be divisible by this)
+# The smaller this is, the more overlapping data there is (overlapping raw data, not necessarily as tokenized)
 # With current main dataset, 10 = 36 hours to tokenize (1 = something like 12 days iirc)
-SECONDS_PER_STEP = 18 #7  # seconds
+SECONDS_PER_STEP = 1  # seconds
 BATCH_SIZE = 3
 
 assert SECONDS_PER_STEP <= CHUNK_LENGTH
@@ -144,7 +148,9 @@ def main():
         for file in files:
             if file.lower().endswith(('.wav', '.mp3', '.flac', '.ogg')):
                 full_path = os.path.join(root, file)
-                audio_files.append(full_path)
+                # Check if GENRE_KEYWORD is None or if it's in the path (case insensitive)
+                if GENRE_KEYWORD is None or GENRE_KEYWORD.lower() in os.path.relpath(root, INPUT_DIR).lower():
+                    audio_files.append(full_path)
 
     new_files = [f for f in audio_files if f not in existing_files]
     if new_files:

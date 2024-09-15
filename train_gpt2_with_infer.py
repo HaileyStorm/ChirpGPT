@@ -59,7 +59,7 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
 if master_process:
-    wandb.init(project="MusicGPT-Classical")
+    wandb.init(project="MusicGPT-EDM")
 
 # ------------------------------
 # HYPER-PARAMETERS
@@ -78,21 +78,25 @@ grok_warmup_steps = 1000
 grok_alpha = 0.75  # 0.925
 grok_lamb = 0.9  # 1.1
 
-weight_decay = 0.113333
+weight_decay = 0.05 #0.113333
 
 # Big music model is ~2.79x larger than Small
-max_lr = 7.5e-5  # 1.73e-4
+max_lr = 8.5e-5  # 1.73e-4
 init_lr_pct = 0.025  #0.07
 min_lr_pct = 0.01
 
 loss_by_later_subchunks = False
 # When loss_by_later_subchunks = True, warmup to:
-third_subchunk_predict_percentage = 0.75
+third_subchunk_predict_percentage = 0.8
 # After warmup, 2nd+third subchunk percentage = 1 - third (during warmup full sequence likelihood decreases from 1 to 0)
 
 # At 170MB tokenized data & next-chunk loss, val starts increasing ~epoch 5-6. With music at least seems start earlier for full sequence loss.
 # Maybe try 3-4 epochs full-sequence then ~2-4(?) next-chunk(s)
-num_epochs = 2  # Can be fraction
+# EDM: aiming ~2.5 epoch of "small" but starting with some big.
+# Set data to big and num epochs to 5.416667 (total steps=50255)
+# Then after 1 epoch (9277 steps), ***DISABLE train_loader.skip_batches on resume*** and change data to small and num epochs to 2.45283 (total steps should ~match)
+# Should be ~6.4B tokens total
+num_epochs = 2.5  # Can be fraction
 grad_clip_percentile = 0.09
 grad_clip_min = 1e-3
 grad_clip_max = 0.85
@@ -100,15 +104,16 @@ norms_window_size = 250
 # Decrease lr when norm percentile & loss are increasing
 max_clip_slope = 1.1
 lr_adj_rate = 0.925  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps while conditions met
-warmup_steps = 2500  #1800
+warmup_steps = 2200  #1800
 save_every = 2500
 inference_batch_size = 3
 
+log_dir = "log_edm"
 resume = True
-resume_from = './log_classical/model_s20000_vl5.0279.pt'
+resume_from = './log_edm/model_s37500_vl4.2153.pt'
 # Whether to reset (or load from checkpoint) the optimizer. Also resets norms&loss windows.
-reset_optimizer = True
-# Whether to reset (or load from checkpoint) the schedule (currently, the step number and best val loss)
+reset_optimizer = False
+# Whether to reset (or load from checkpoint) the schedule (the step number & therefore learning rate, best val loss, etc.)
 reset_schedule = False
 
 use_compile = True
@@ -147,6 +152,7 @@ norms_window = []
 loss_window = []
 divergence_window = []
 grok_start_step = -1
+tokens_trained = 0
 
 if resume:
     print(f"Resuming from {resume_from}")
@@ -172,6 +178,8 @@ if resume:
             val_loader.skip_batches(step * 10)
         if "val_loss" in chkpt:
             best_val_loss = chkpt["val_loss"]
+        if "tokens_trained" in chkpt:
+            tokens_trained = chkpt["tokens_trained"]
 
 if use_compile:
     model = torch.compile(model)
@@ -340,7 +348,6 @@ optimizer_resets = 0
 clip_val = get_clip_value([], 0)
 
 # create the log directory we will write checkpoints to and log to
-log_dir = "log_classical"
 os.makedirs(log_dir, exist_ok=True)
 #log_file = os.path.join(log_dir, f"log.txt")
 #with open(log_file, "w") as f: # open for writing to clear the file
@@ -350,9 +357,10 @@ t = tqdm(range(step, max_steps), initial=step, total=max_steps, desc=f"Training 
 for step in t:
     t0 = time.time()
     last_step = (step == max_steps - 1)
+    new_epoch = step * total_batch_size / train_loader.total_tokens == 0
 
     # once in a while evaluate our validation loss
-    if step > 0 and (step % eval_every == 0 or step % save_every == 0 or last_step):
+    if step > 0 and (step % eval_every == 0 or step % save_every == 0 or last_step or new_epoch):
         model.eval()
         with torch.no_grad():
             val_loss_accum = 0.0
@@ -406,7 +414,7 @@ for step in t:
             if len(divergence_window) > divergence_window_size:
                 divergence_window.pop(0)
 
-            if step == eval_every or last_step or step % save_every == 0 or (step >= warmup_steps and val_loss_accum.item() < best_val_loss):
+            if step == eval_every or last_step or new_epoch or step % save_every == 0 or (step >= warmup_steps and val_loss_accum.item() < best_val_loss):
                 best_val_loss = min(best_val_loss, val_loss_accum.item())
                 if best_val_loss < 4.99:  # 4.75 for Chirp
                     val_loss_steps = 35
@@ -431,10 +439,11 @@ for step in t:
                         'norms_window': norms_window,
                         'loss_window': loss_window,
                         "divergence_window": divergence_window,
-                        "grok_start_step": grok_start_step
+                        "grok_start_step": grok_start_step,
+                        "tokens_trained": tokens_trained
                     }
                     torch.save(checkpoint, checkpoint_path)
-                    if step % save_every == 0:
+                    if step % save_every == 0 or last_step or new_epoch:
                         try:
                             print("\nGenerating audio samples...")
                             torch.cuda.empty_cache()
@@ -585,6 +594,7 @@ for step in t:
         if prev_epoch != current_epoch:
             #print(f"Epoch {current_epoch}")
             t.set_description(f"Training epoch {current_epoch+1} of {num_epochs}", refresh=True)
+        tokens_trained += total_batch_size
         wandb.log({
             "etc/step": step,
             "etc/epoch": current_epoch,
@@ -592,6 +602,7 @@ for step in t:
             "etc/norm": norm.item(),
             "etc/clip_value": clip_val,
             "etc/toks_per_sec": tokens_per_sec,
+            "etc/toks_trained": tokens_trained,
             "train/loss": loss_accum.item(),
         }, step=step)
 

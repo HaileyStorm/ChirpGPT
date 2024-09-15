@@ -9,11 +9,11 @@ from scipy.io.wavfile import write
 import torch.distributed.checkpoint as dist_checkpoint
 import math
 
-checkpoint_path = './log/model_s110500_vl4.90655.pt'
+checkpoint_path = './log_edm/model_s50000_vl4.1830.pt'
 shampoo = False
 
-batch_size = 3
-num_batches = 15
+batch_size = 2 #3
+num_batches = 10
 # Generally OK ~0.9-1.01, depending on what you're after, best ~0.935-0.975, default 0.96
 temperature = 0.96
 # Best 640-720, default 712
@@ -151,7 +151,7 @@ for b in range(num_batches):
     for i in range(batch_size):
         print(np.array([output_tokens[i]]))
         audio_out = tokenizer.decode(np.array([output_tokens[i]]))
-        write(f'./log/final/tk712_360_408_round3/full_b{b}_{i}.wav', tokenizer.sample_rate, audio_out.cpu().detach().numpy())
+        write(f'./log_edm/50k/full_b{b}_{i}.wav', tokenizer.sample_rate, audio_out.cpu().detach().numpy())
 
     with torch.no_grad():
         del output_tokens
