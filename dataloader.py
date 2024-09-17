@@ -20,7 +20,7 @@ class DataLoaderLite:
             random.seed(seed)
             np.random.seed(seed)
 
-        data_root = "./edm_small_data_shuffled"
+        data_root = "./pop_data_shuffled"
         shards = os.listdir(data_root)
         shards = [s for s in shards if split in s]
         shards = sorted(shards)

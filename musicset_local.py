@@ -8,12 +8,12 @@ import json
 from two_sep_tokenizer import AudioTokenizer
 
 # Constants
-INPUT_DIR = '/media/hailey/TVBox/music_dl'
+INPUT_DIR = '/media/hailey/TVBox/pop'
 # Only include songs in folders which contain this word (case-insensitive)
 # Set to None to include all songs
-GENRE_KEYWORD = "pop"
-DATA_DIR = './pop_data'
-PREFIX = 'pop'
+GENRE_KEYWORD = None
+DATA_DIR = './pop2_data'
+PREFIX = 'pop2'
 SHARD_SIZE = 15 * 1024 * 1024  # 15MB in bytes
 CHUNK_LENGTH = 18  # seconds
 SUB_CHUNK_LENGTH = 6  # seconds

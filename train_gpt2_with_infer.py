@@ -59,7 +59,7 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
 if master_process:
-    wandb.init(project="MusicGPT-EDM")
+    wandb.init(project="MusicGPT-Pop")
 
 # ------------------------------
 # HYPER-PARAMETERS
@@ -81,22 +81,16 @@ grok_lamb = 0.9  # 1.1
 weight_decay = 0.05 #0.113333
 
 # Big music model is ~2.79x larger than Small
-max_lr = 8.5e-5  # 1.73e-4
+max_lr = 9e-5  # 1.73e-4
 init_lr_pct = 0.025  #0.07
-min_lr_pct = 0.01
+min_lr_pct = 0.015 #0.01
 
 loss_by_later_subchunks = False
 # When loss_by_later_subchunks = True, warmup to:
 third_subchunk_predict_percentage = 0.8
 # After warmup, 2nd+third subchunk percentage = 1 - third (during warmup full sequence likelihood decreases from 1 to 0)
 
-# At 170MB tokenized data & next-chunk loss, val starts increasing ~epoch 5-6. With music at least seems start earlier for full sequence loss.
-# Maybe try 3-4 epochs full-sequence then ~2-4(?) next-chunk(s)
-# EDM: aiming ~2.5 epoch of "small" but starting with some big.
-# Set data to big and num epochs to 5.416667 (total steps=50255)
-# Then after 1 epoch (9277 steps), ***DISABLE train_loader.skip_batches on resume*** and change data to small and num epochs to 2.45283 (total steps should ~match)
-# Should be ~6.4B tokens total
-num_epochs = 2.5  # Can be fraction
+num_epochs = 4.77  # Can be fraction
 grad_clip_percentile = 0.09
 grad_clip_min = 1e-3
 grad_clip_max = 0.85
@@ -108,9 +102,9 @@ warmup_steps = 2200  #1800
 save_every = 2500
 inference_batch_size = 3
 
-log_dir = "log_edm"
+log_dir = "log_pop"
 resume = True
-resume_from = './log_edm/model_s37500_vl4.2153.pt'
+resume_from = './log_pop/model_s05000_vl5.0332.pt'
 # Whether to reset (or load from checkpoint) the optimizer. Also resets norms&loss windows.
 reset_optimizer = False
 # Whether to reset (or load from checkpoint) the schedule (the step number & therefore learning rate, best val loss, etc.)
@@ -265,8 +259,23 @@ def get_top_k(step, top_k_max, top_k_min, top_k_warmup):
     else:
         return top_k_min
 
+def min_p_sampling(logits, p_base):
+    # Convert logits to probabilities
+    probs = F.softmax(logits, dim=-1)
+    # Get the probability of the top token
+    p_top = probs.max()
+    # Calculate the dynamic threshold
+    p_threshold = p_base * p_top
+    # Create a mask for tokens above the threshold
+    mask = probs >= p_threshold
+    # Zero out probabilities below the threshold
+    filtered_probs = probs * mask
+    # Renormalize the remaining probabilities
+    filtered_probs = filtered_probs / filtered_probs.sum(dim=-1, keepdim=True)
+    return filtered_probs
 
-def generate_tokens(model, seq_length, batch_size, prefill=None, temperature=0.96, top_k=360, top_k_max=712, top_k_min=360, top_k_warmup=408):
+
+def generate_tokens(model, seq_length, batch_size, prefill=None, temperature=0.96, p_base=0.0515, min_p_temp=0.968):
     if prefill is None:
         tokens = [4097]
         tokens = torch.tensor(tokens, dtype=torch.long)
@@ -277,9 +286,6 @@ def generate_tokens(model, seq_length, batch_size, prefill=None, temperature=0.9
 
     with torch.no_grad():
         for _ in tqdm(range(T - x.size(1) + 1), dynamic_ncols=True, desc="Generating tokens", position=1, leave=False):
-            if prefill is None:
-                current_step = min(x.size(1) - 1, top_k_warmup)
-                top_k = get_top_k(current_step, top_k_max, top_k_min, top_k_warmup)
             logits, _ = model(x)
             next_token_logits = logits[:, -1, :]
 
@@ -290,24 +296,20 @@ def generate_tokens(model, seq_length, batch_size, prefill=None, temperature=0.9
             if nan_mask.any():
                 # print("Warning: NaN or Inf values detected in logits. Replacing with very negative values.")
                 next_token_logits = torch.where(nan_mask, torch.full_like(next_token_logits, -1e9), next_token_logits)
-            # Compute softmax probabilities
-            probs = F.softmax(next_token_logits, dim=-1)
-            # Perform top-k sampling
-            top_k_probs, top_k_indices = torch.topk(probs, top_k, dim=-1)
-            # Renormalize the top-k probabilities
-            top_k_probs = top_k_probs / top_k_probs.sum(dim=-1, keepdim=True)
-            # Check for NaN values in top_k_probs
-            if torch.isnan(top_k_probs).any():
-                # print("Warning: NaN values detected in top-k probabilities. Using uniform distribution.")
-                top_k_probs = torch.ones_like(top_k_probs) / top_k
-            # Sample from the top-k distribution
+
+            filtered_probs = min_p_sampling(next_token_logits, p_base)
+
+            if torch.isnan(filtered_probs).any():
+                # print("Warning: NaN values detected in probabilities. Using uniform distribution.")
+                filtered_probs = torch.ones_like(filtered_probs) / filtered_probs.shape[-1]
+
             try:
-                sample_indices = torch.multinomial(top_k_probs, num_samples=1)
-                next_token = torch.gather(top_k_indices, -1, sample_indices)
+                next_token = torch.multinomial(filtered_probs, num_samples=1)
             except RuntimeError as e:
                 print(f"Error during sampling: {e}")
-                print("Falling back to argmax selection from top-k.")
-                next_token = top_k_indices[:, 0].unsqueeze(-1)  # Select the highest probability token
+                print("Falling back to argmax selection.")
+                next_token = filtered_probs.argmax(dim=-1).unsqueeze(-1)
+
             # Append the new token to the sequence
             x = torch.cat([x, next_token], dim=1)
 
