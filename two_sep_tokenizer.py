@@ -42,8 +42,10 @@ class AudioTokenizer:
        """
 
     def __init__(self, device = 'cpu') -> None:
-        self.model = torch.compile(SNAC.from_pretrained("hubertsiuzdak/snac_32khz").eval().to(device))
-        self.sample_rate = 32000
+        #self.model = torch.compile(SNAC.from_pretrained("hubertsiuzdak/snac_32khz").eval().to(device))
+        self.model = torch.compile(SNAC.from_pretrained("hubertsiuzdak/snac_44khz").eval().to(device))
+        #self.sample_rate = 32000
+        self.sample_rate = 44000
         self.device = device
         self.separator = 4097
         # Aka timestep separator or code separator
@@ -189,11 +191,11 @@ class AudioTokenizer:
         #print(f"encode model output (`codes`) shape: {[code.shape for code in codes]}")
             
         #print("Number of tensors:", len(codes))
-        #mx = 0
-        #for i, code in enumerate(codes):
+        mx = 0
+        for i, code in enumerate(codes):
         #    print(f"\tTensor {i} shape: {code.shape}, min: {torch.min(code)}, max: {torch.max(code)}")
-        #    mx = max(torch.max(code), mx)
-        #print(f"Max value: {mx}")
+            mx = max(torch.max(code), mx)
+        print(f"Max value: {mx}")
         
         del audio
 

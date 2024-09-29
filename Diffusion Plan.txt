@@ -1,0 +1,62 @@
+Project Plan: SNAC-based Diffusion Model for Audio Generation
+
+Objective:
+Develop a diffusion or DiT (Diffusion/Transformer hybrid) model that generates 6-second audio chunks using the 32kHz SNAC tokenizer encoding.
+
+SNAC Tokenizer Overview:
+The SNAC (multi-Scale Neural Audio Codec) tokenizer is a hierarchical audio encoding model that splits the audio into four tensors with increasing levels of granularity. The length of the tensors depends on the input audio, but using 6-second audio for example:
+- A: Coarsest level, 64 tokens per 6 seconds
+- B: 2 tokens per A token, 128 tokens per 6 seconds
+- C: 2 tokens per B token, 256 tokens per 6 seconds
+- D: Finest level, 2 tokens per C token, 512 tokens per 6 seconds
+Total: 960 tokens represent 6 seconds of 32kHz audio
+
+Model Structure:
+- Input: Two 6-second chunks (12 seconds) of audio context
+- Output: One 6-second chunk of generated audio
+- Representation: SNAC encoding with four tensors (A, B, C, D)
+
+Diffusion Process:
+1. Progressive diffusion of A, B, C, and D tensors
+2. Multiple diffusion steps for each tensor, with potentially more steps for finer levels
+
+Model Architecture:
+A unified model with four stages/output heads, corresponding to A, B, C, and D tensors
+
+Training Process:
+1. Pre-training phase:
+   - Train the model to diffuse without context
+   - B from A, C from AB, D from ABC
+
+2. Main training phase:
+   - Full context: ABCDABCD (12 seconds, 1920 tokens)
+   - Diffuse A using full context
+   - Diffuse B using ABCDABCDA
+   - Diffuse C using ABCDABCDAB
+   - Diffuse D using ABCDABCDABC
+
+Implementation Considerations:
+1. Design flexible attention mechanisms to handle variable-sized inputs across stages
+   - Implement a mechanism that can attend to different subsets of the input (e.g., only A tokens, A and B tokens, etc.)
+   - This flexibility will allow smooth transition from pre-training to full-context training by gradually increasing the context size
+
+2. Implement parameter sharing between stages where appropriate
+   - Identify common operations across stages and design shared modules
+   - This can improve efficiency and potentially aid in knowledge transfer between stages
+
+3. Develop a noise schedule that accounts for the hierarchical nature of the SNAC encoding
+   - Consider different noise levels or schedules for each of the A, B, C, and D stages
+   - This may involve more aggressive denoising for coarser levels and finer control for detailed levels
+   - Potentially use more diffusion steps for finer-grained tensors (D > C > B > A)
+
+4. Create a curriculum learning strategy for transitioning from pre-training to full-context training
+   - Start with pre-training on individual levels (B from A, C from AB, D from ABC)
+   - Gradually introduce longer contexts, potentially in this order:
+     a. ABCD (single chunk - start with the later chunk)
+     b. ABCDABCD (two chunks - prepend the earlier chunk)
+   - Fine-tune the model on the full two-chunk context
+
+5. Implement efficient data loading and preprocessing pipelines
+   - Design batching strategies that work well with the hierarchical structure
+
+This plan provides a framework for developing a diffusion model based on the SNAC tokenizer, with a focus on leveraging the hierarchical structure of the encoding. The flexible attention mechanisms and curriculum learning strategy should allow for effective knowledge transfer from the pre-training phase to the full-context training phase.

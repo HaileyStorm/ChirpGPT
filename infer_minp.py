@@ -4,16 +4,18 @@ from collections import OrderedDict
 import numpy as np
 from tqdm import tqdm
 from torch.nn import functional as F
-from two_sep_tokenizer import AudioTokenizer
+from offset_tokenizer import AudioTokenizer
 from scipy.io.wavfile import write
 import torch.distributed.checkpoint as dist_checkpoint
 import math
+import random
+import sys
 
-checkpoint_path = './log_edm/model_s50000_vl4.1830.pt'
+checkpoint_path = './log_small44khz/model_s05000_vl7.3514.pt'
 shampoo = False
 
-batch_size = 2 #3
-num_batches = 3
+batch_size = 2
+num_batches = 1
 # Recommend 0.045-0.055
 p_base = 0.0515
 # Recommend 0.965-0.99 (for p_base 0.045), but can get fun results up to 1.1 or more
@@ -27,14 +29,16 @@ top_k_min = 360
 # Number of generated tokens to take to decrease from top_k_max to top_k_min
 # Depending on min/max, OK 512 on down to 128 or less, best ~384-416, default 408
 top_k_warmup = 408
-sampling_methods = ['min_p']  #['top_k', 'min_p']
-seed = 42
+sampling_methods = ['top_k']#, 'min_p']
+random.seed()
+seed = random.randint(0, sys.maxsize)
 
 # 3s @ 32khz = 512 tokens
 # 4.5s = 768 tokens
 # 6s = 1024
+block_size = 6483 #3072
 # We could reduce this by one and append the final separator token manually.
-max_length = 2048
+max_length = 2161 #3072
 
 device = "cpu"
 if torch.cuda.is_available():
@@ -42,7 +46,7 @@ if torch.cuda.is_available():
 elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     device = "mps"
 print(f"using device: {device}")
-model = GPT(GPTConfig(block_size=3072))
+model = GPT(GPTConfig(block_size=block_size, use_liger_gelu=True))
 
 if shampoo:
     chkpt = {}
@@ -69,9 +73,6 @@ model.to(device)
 
 seperator = 4097
 
-sample_rng = torch.Generator(device=device)
-sample_rng.manual_seed(1337)
-
 
 def min_p_sampling(logits, p_base):
     # Convert logits to probabilities
@@ -97,6 +98,14 @@ def get_top_k(step):
         return int(top_k_max - sigmoid_progress * (top_k_max - top_k_min))
     else:
         return top_k_min
+
+
+def normalize_audio(audio):
+    audio = audio.squeeze()  # Remove any extra dimensions
+    audio = (audio - np.min(audio)) / (np.max(audio) - np.min(audio))  # Normalize to 0-1
+    audio = (audio * 2) - 1  # Scale to -1 to 1
+    audio = (audio * 32767).astype(np.int16)  # Scale to 16-bit integer range
+    return audio
 
 
 for b in range(num_batches):
@@ -191,10 +200,10 @@ for b in range(num_batches):
         tokenizer = AudioTokenizer(device=device)
 
         for i in range(batch_size):
-            print(np.array([output_tokens[i]]))
+            print(f'output_tokens ({len(output_tokens[i])}): {np.array([output_tokens[i]])}')
             audio_out = tokenizer.decode(np.array([output_tokens[i]]))
-            write(f'./log_edm/50k/topk_vs_minp/{sampling_method}_b{b}_{i}.wav', tokenizer.sample_rate,
-                  audio_out.cpu().detach().numpy())
+            audio_out = normalize_audio(audio_out.cpu().detach().numpy())
+            write(f'./log_small44khz/model_s05000_vl7.3514/{sampling_method}_b{b}_{i}.wav', tokenizer.sample_rate, audio_out)
 
         with torch.no_grad():
             del output_tokens

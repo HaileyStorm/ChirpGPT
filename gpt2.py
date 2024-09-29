@@ -12,33 +12,37 @@ from liger_kernel.transformers.geglu import LigerGEGLUMLP
 class GPTConfig:
     # max sequence length
     block_size: int = 1536
-    vocab_size: int = 4160  # 4112
+    vocab_size: int = 16389 #4160
     use_liger_gelu: bool = False
 
-    # WIDE
-    # max_lr ~ 2.333e-3, grad_clip_max ~ 0.5
-    #n_layer: int = 11
-    #n_head: int = 16
-    #n_embd: int = 1152
-
-    # NARROW(er)
-    # max_lr ~ 2e-4, grad_clip_max ~ 0.6667
-    #n_layer: int = 20
-    #n_head: int = 14
-    #n_embd: int = 854
-
-    # SMALL (and a somewhat narrow)
-    # max_lr ~ 5e-4????, grad_clip_max ~ 0.6667 (or less)
-    #n_layer: int = 10
-    #n_head: int = 8
-    #n_embd: int = 576
-
     # MUSIC
+    # 123M (103M w/ Liger)
     # max_lr = 1.73e-4
-    n_layer: int = 13
-    n_head: int = 12
-    n_embd: int = 864
+    #n_layer: int = 13
+    #n_head: int = 12
+    #n_embd: int = 864
 
+    # Small music??
+    # 49M, 59.7M for 44khz/30s context
+    # max_lr guess ~4.2e-4
+    n_layer: int = 11
+    n_head: int = 12 #10 #try 12, 576? 768?
+    n_embd: int = 576 #640
+    # Or even smaller
+    # 30M, 38M for 44khz/30s context
+    # max_lr 4.35e-4 (tested a little but not swept)
+    # batch 48/8, 40/2 for 44khz/30s context
+    #n_layer: int = 10
+    #n_head: int = 8  # maybe try 12
+    #n_embd: int = 512  # maybe try 516 or 576 (to be divisible by 12)
+    # And one more
+    # 19M?
+    # max_lr 4.5e-4 (tested but not swept)
+    # batch 48/12
+    # As of 7500 steps, it's very close in loss to 123M but seems to be struggling with output more, leaning toward using 30M+
+    #n_layer: int = 8
+    #n_head: int = 7
+    #n_embd: int = 448
 
 class CausalSelfAttention(nn.Module):
 
@@ -80,7 +84,7 @@ class MLP(nn.Module):
             GeluConfig = namedtuple("GeluConfig", ["hidden_size", "intermediate_size", "hidden_act"])
             self.liger_mlp = LigerGEGLUMLP(GeluConfig(
                 hidden_size=config.n_embd,
-                intermediate_size=4 * config.n_embd,
+                intermediate_size=2 * config.n_embd,
                 hidden_act="gelu_pytorch_tanh"
             ))
         else:

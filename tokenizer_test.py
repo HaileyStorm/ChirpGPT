@@ -1,8 +1,12 @@
 import torch
 import torchaudio
-from two_sep_tokenizer import AudioTokenizer
+from offset_tokenizer import AudioTokenizer
 import numpy as np
 from scipy.io import wavfile
+
+audio_path = "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/.unwanted/03. Benson boone - Beautiful Things.mp3"
+seconds_to_load = 30
+seconds_per_chunk = 10
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
@@ -11,8 +15,7 @@ print(f"Using device: {device}")
 tokenizer = AudioTokenizer(device=device)
 
 # Load a small clip from the audio file
-audio_path = "/media/hailey/TVBox/music_dl/PMEDiA Music Pack 046 of 2024/Various Artists - Summer 2024 – Top 100 Songs (2024)/.unwanted/03. Benson boone - Beautiful Things.mp3"
-waveform, sample_rate = torchaudio.load(audio_path, num_frames=10 * tokenizer.sample_rate)  # Load 10 seconds
+waveform, sample_rate = torchaudio.load(audio_path, num_frames=seconds_to_load * tokenizer.sample_rate)
 
 # Resample to 32kHz if necessary
 if sample_rate != tokenizer.sample_rate:
@@ -24,7 +27,7 @@ if waveform.size(0) > 1:
     waveform = torch.mean(waveform, dim=0, keepdim=True)
 
 # Split the audio into chunks
-chunk_size = int(6 * tokenizer.sample_rate)
+chunk_size = int(seconds_per_chunk * tokenizer.sample_rate)
 chunks = [waveform[:, i:i+chunk_size] for i in range(0, waveform.size(1), chunk_size)]
 
 # Pad the last chunk if necessary
@@ -35,6 +38,8 @@ if chunks[-1].size(1) < chunk_size:
 encoded = tokenizer.encode(chunks)
 for code in encoded:
     print(f"Code shape: {code.shape}")
+    print(code[:18])
+    print(code[-18:])
 
 # Decode the audio
 decoded = tokenizer.decode(encoded)

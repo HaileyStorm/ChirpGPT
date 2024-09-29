@@ -4,9 +4,12 @@ import random
 from tqdm import tqdm
 
 # Constants
-BLOCK_SIZE = 3072
-CRITICAL_DIVISOR = 1024
+BLOCK_SIZE = 6483  # 3072
+CRITICAL_DIVISOR = 2161  # 1024
 TARGET_SHARD_BLOCKS = 5000
+
+data_root = "./pop3_data_offset44khz"
+output_root = "./pop3_data_offset44khz_shuffled"
 
 
 def load_dataset(data_root, split):
@@ -86,9 +89,6 @@ def shuffle_and_create_new_shards(all_data, output_dir, split):
 
 
 def main():
-    data_root = "./pop2_data"
-    output_root = "./pop2_data_shuffled"
-
     for split in ['train', 'val']:
         print(f"Processing {split} dataset...")
         all_data = load_dataset(data_root, split)

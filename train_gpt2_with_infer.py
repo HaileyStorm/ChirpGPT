@@ -14,7 +14,8 @@ from tqdm import tqdm
 from collections import OrderedDict
 from torch.nn import functional as F
 import random
-from two_sep_tokenizer import AudioTokenizer
+#from two_sep_tokenizer import AudioTokenizer
+from offset_tokenizer import AudioTokenizer
 from scipy.io.wavfile import write
 from traceback import format_exc
 from liger_kernel.transformers.cross_entropy import LigerCrossEntropyLoss
@@ -58,39 +59,48 @@ torch.manual_seed(1337)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
-if master_process:
-    wandb.init(project="MusicGPT-Pop")
-
 # ------------------------------
 # HYPER-PARAMETERS
 # ------------------------------
 
-# sequence length
-T = 3072
-total_batch_size = T*42  # pick something about 32768
-# micro batch size
-B = 3
+wandb_project = "MusicGPT-Small" #"MusicGPT-Pop"
+
+# sequence length (block size)
+T = 6483 #3072
+# pick something ~32768+
+total_batch_size = T*40 #44
+# micro batch size (T*B, and ofc model dims, determines VRAM use; total_batch_size//B is grad accum steps)
+B = 1 #4
+use_liger_gelu = True #False
 
 grok_enabled = False
 grok_start_divergence = 1.035
 divergence_window_size = 5
 grok_warmup_steps = 1000
-grok_alpha = 0.75  # 0.925
-grok_lamb = 0.9  # 1.1
+grok_alpha = 0.925
+grok_lamb = 1.1
 
-weight_decay = 0.05 #0.113333
+# base 0.113333
+# fine (if enough data) 0.05
+weight_decay = 0.05  #0.03
 
-# Big music model is ~2.79x larger than Small
-max_lr = 9e-5  # 1.73e-4
-init_lr_pct = 0.025  #0.07
-min_lr_pct = 0.015 #0.01
+# base 1.73e-4
+# fine 9e-5
+max_lr = 4.2e-4 #7.5e-5
+# base 0.07
+# fine 0.025
+init_lr_pct = 0.07 #0.025
+min_lr_pct = 0.015
 
 loss_by_later_subchunks = False
 # When loss_by_later_subchunks = True, warmup to:
 third_subchunk_predict_percentage = 0.8
 # After warmup, 2nd+third subchunk percentage = 1 - third (during warmup full sequence likelihood decreases from 1 to 0)
 
-num_epochs = 4.77  # Can be fraction
+# original (music_data_shuffled) base 2.5
+# pop2 4.77
+# pop3 7
+num_epochs = 21.31 #7  # Can be fraction
 grad_clip_percentile = 0.09
 grad_clip_min = 1e-3
 grad_clip_max = 0.85
@@ -98,15 +108,18 @@ norms_window_size = 250
 # Decrease lr when norm percentile & loss are increasing
 max_clip_slope = 1.1
 lr_adj_rate = 0.925  # effectively, max_lr = max_lr * lr_adj_rate every norms_window_size/3 steps while conditions met
-warmup_steps = 2200  #1800
+# base 1800
+# fine 2200
+warmup_steps = 1400
 save_every = 2500
-inference_batch_size = 3
+inference_batch_size = 1 #3
+assert inference_batch_size <= B
 
-log_dir = "log_pop"
-resume = True
-resume_from = './log_pop/model_s05000_vl5.0332.pt'
+log_dir = "log_small44khz"
+resume = False #True
+resume_from = './log_small44khz/model.pt'
 # Whether to reset (or load from checkpoint) the optimizer. Also resets norms&loss windows.
-reset_optimizer = False
+reset_optimizer = True #False
 # Whether to reset (or load from checkpoint) the schedule (the step number & therefore learning rate, best val loss, etc.)
 reset_schedule = False
 
@@ -115,6 +128,9 @@ use_compile = True
 # ------------------------------
 # END HYPER-PARAMETERS
 # ------------------------------
+
+if master_process:
+    wandb.init(project=wandb_project)
 
 chunk_size = T // 3
 print(f"Chunk size: {chunk_size}")
@@ -135,7 +151,7 @@ print(f"Max steps: {max_steps}, Warmup steps: {warmup_steps}")
 torch.set_float32_matmul_precision('high')
 
 # create model
-model = GPT(GPTConfig(block_size=T), init_weights=True)
+model = GPT(GPTConfig(block_size=T, use_liger_gelu=use_liger_gelu), init_weights=True)
 model.to(device)
 optimizer = model.configure_optimizers(weight_decay=weight_decay, learning_rate=max_lr * init_lr_pct, device_type=device_type, log=False)
 criterion = LigerCrossEntropyLoss()
@@ -416,17 +432,18 @@ for step in t:
             if len(divergence_window) > divergence_window_size:
                 divergence_window.pop(0)
 
-            if step == eval_every or last_step or new_epoch or step % save_every == 0 or (step >= warmup_steps and val_loss_accum.item() < best_val_loss):
+            if last_step or new_epoch or step % save_every == 0 or val_loss_accum.item() < best_val_loss:
                 best_val_loss = min(best_val_loss, val_loss_accum.item())
-                if best_val_loss < 4.99:  # 4.75 for Chirp
-                    val_loss_steps = 35
-                    eval_every = 50
-                elif best_val_loss < 5.09:  # 4.825 for Chirp
-                    val_loss_steps = 25
-                    eval_every = 100
-                else:
-                    val_loss_steps = 12
-                    eval_every = 200
+                if step > warmup_steps:
+                    if best_val_loss < 4.99:  # 4.75 for Chirp
+                        val_loss_steps = 35
+                        eval_every = 50
+                    elif best_val_loss < 5.09:  # 4.825 for Chirp
+                        val_loss_steps = 25
+                        eval_every = 100
+                    else:
+                        val_loss_steps = 12
+                        eval_every = 200
                 # Don't save on the first step when resuming
                 if not resume or step != chkpt["step"]:
                     name = f"model_s{step:05d}_vl{val_loss_accum.item():.4f}.pt" if step % save_every == 0 else "model.pt"

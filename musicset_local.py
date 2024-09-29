@@ -5,23 +5,25 @@ import torchaudio
 import numpy as np
 from tqdm import tqdm
 import json
-from two_sep_tokenizer import AudioTokenizer
+from offset_tokenizer import AudioTokenizer
 
 # Constants
-INPUT_DIR = '/media/hailey/TVBox/pop'
+INPUT_DIR = '/media/hailey/TVBox/pop/BEST'
 # Only include songs in folders which contain this word (case-insensitive)
 # Set to None to include all songs
 GENRE_KEYWORD = None
-DATA_DIR = './pop2_data'
-PREFIX = 'pop2'
+DATA_DIR = './pop3_data_offset44khz'
+PREFIX = 'pop3'
 SHARD_SIZE = 15 * 1024 * 1024  # 15MB in bytes
-CHUNK_LENGTH = 18  # seconds
-SUB_CHUNK_LENGTH = 6  # seconds
+CHUNK_LENGTH = 30  # seconds
+SUB_CHUNK_LENGTH = 10  # seconds
+SUB_CHUNK_SIZE = 2161  # tokens
 # The bigger this is, the more empty data will be tokenized (each file is padded to be divisible by this)
 # The smaller this is, the more overlapping data there is (overlapping raw data, not necessarily as tokenized)
 # With current main dataset, 10 = 36 hours to tokenize (1 = something like 12 days iirc)
-SECONDS_PER_STEP = 1  # seconds
-BATCH_SIZE = 3
+SECONDS_PER_STEP = 0.5  # seconds
+# 3 for 6 seconds @ 32khz; 1 for 10 seconds @ 44khz
+BATCH_SIZE = 1
 
 assert SECONDS_PER_STEP <= CHUNK_LENGTH
 
@@ -83,7 +85,7 @@ def process_audio(waveforms, sample_rates):
     max_pad = samples_per_chunk // 3.1
 
     for start_time in range(0, max_length - samples_per_chunk + 1,
-                            tokenizer.sample_rate * SECONDS_PER_STEP):  #tqdm(range(0, max_length - samples_per_chunk + 1, tokenizer.sample_rate * SECONDS_PER_STEP), "\tChunking and tokenizing batch...", dynamic_ncols=True):
+                            int(tokenizer.sample_rate * SECONDS_PER_STEP)):  #tqdm(range(0, max_length - samples_per_chunk + 1, tokenizer.sample_rate * SECONDS_PER_STEP), "\tChunking and tokenizing batch...", dynamic_ncols=True):
         end_time = start_time + samples_per_chunk
         batch_chunks = []
         for w in processed_waveforms:
@@ -109,10 +111,14 @@ def process_audio(waveforms, sample_rates):
         for i in range(3):  # For each subchunk position
             batch_subchunks = [sc[i] for sc in valid_sub_chunks]
             tokenized_batch = tokenizer.encode(batch_subchunks)
+            # Remove the trailing separator (so there's a single separator between subchunks in the context)
             tokenized_sub_chunks.append([t[:-1] for t in tokenized_batch])
 
         for i, (sc1, sc2, sc3) in enumerate(zip(*tokenized_sub_chunks)):
-            if all(len(sc) == 1024 for sc in (sc1, sc2, sc3)):
+            if all(len(sc) == SUB_CHUNK_SIZE for sc in (sc1, sc2, sc3)):
+                #print(f'sc1 ({sc1.shape}): {sc1}')
+                #print(f'sc2 ({sc2.shape}): {sc2}')
+                #print(f'sc3 ({sc3.shape}): {sc3}')
                 tokenized_chunks[i].append([sc1, sc2, sc3])
 
     return [chunk for chunk in tokenized_chunks if chunk]  # Remove empty lists
@@ -191,6 +197,7 @@ def main():
             for file_chunks in tokenized_chunks:
                 total_chunks += len(file_chunks)
                 for triple in file_chunks:
+                    print(triple)
                     if np.random.random() < 0.01:  # 1% chance for validation
                         [current_val_shard.extend(chunk) for chunk in triple]
                     else:
